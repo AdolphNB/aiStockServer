@@ -5,9 +5,9 @@ import secrets
 from typing import Optional
 from pydantic import BaseModel
 
-from database import get_db
-from models import Subscription
-from fetcher import get_latest_market_data
+from app.core.database import get_db
+from app.models.models import Subscription
+from app.services.fetcher import get_latest_market_data
 
 router = APIRouter()
 

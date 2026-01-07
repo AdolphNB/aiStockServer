@@ -3,7 +3,7 @@ from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime, time
 import logging
 
-from fetcher import fetch_market_data
+from app.services.fetcher import fetch_market_data
 
 logger = logging.getLogger(__name__)
 

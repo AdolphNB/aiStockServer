@@ -2,11 +2,11 @@ from fastapi import FastAPI
 from sqladmin import Admin, ModelView
 import logging
 
-from config import settings
-from database import engine, Base
-from models import Subscription, AdminUser
-from routers import client
-from scheduler import start_scheduler
+from app.core.config import settings
+from app.core.database import engine, Base
+from app.models.models import Subscription, AdminUser
+from app.api.endpoints import client
+from app.services.scheduler import start_scheduler
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
