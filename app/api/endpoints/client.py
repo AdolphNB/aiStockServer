@@ -92,3 +92,14 @@ def get_market_activity(token: str, db: Session = Depends(get_db)):
         "timestamp": data.get("last_updated"),
         "data": data.get("market_activity")
     }
+
+@router.get("/data/sse-summary")
+def get_sse_summary():
+    """
+    Get cached SSE summary data. Public endpoint, no token required.
+    """
+    data = get_latest_market_data()
+    return {
+        "timestamp": data.get("sse_summary_last_updated"),
+        "data": data.get("sse_summary")
+    }

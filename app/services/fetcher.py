@@ -6,7 +6,9 @@ from datetime import datetime
 # Global In-Memory Cache
 market_data_cache = {
     "market_activity": None,
-    "last_updated": None
+    "sse_summary": None,
+    "last_updated": None,
+    "sse_summary_last_updated": None
 }
 data_lock = threading.Lock()
 
@@ -34,6 +36,29 @@ def fetch_market_data():
         
     except Exception as e:
         logger.error(f"Error fetching market data: {e}")
+
+def fetch_sse_summary():
+    """
+    Fetches SSE summary data from akshare and updates the global cache.
+    Protected by a lock to ensure thread safety during updates.
+    """
+    try:
+        logger.info(f"Fetching SSE summary data at {datetime.now()}")
+        
+        # Fetch SSE summary data
+        stock_sse_summary_df = ak.stock_sse_summary()
+        
+        # Convert to dict for JSON serialization
+        data = stock_sse_summary_df.to_dict(orient="records")
+        
+        with data_lock:
+            market_data_cache["sse_summary"] = data
+            market_data_cache["sse_summary_last_updated"] = datetime.now().isoformat()
+        
+        logger.info("SSE summary data updated successfully.")
+        
+    except Exception as e:
+        logger.error(f"Error fetching SSE summary data: {e}")
 
 def get_latest_market_data():
     with data_lock:
