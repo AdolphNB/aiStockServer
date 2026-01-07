@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     
     # Server
     HOST: str = "0.0.0.0"
-    PORT: int = 80  # Default to port 80 for production
+    PORT: int = int(os.getenv("PORT", "8000"))  # Default to port 8000, can be overridden by PORT env var
     
     # Security
     SECRET_KEY: str = "CHANGE_THIS_IN_PRODUCTION_SECRET_KEY"
