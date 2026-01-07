@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqladmin import Admin, ModelView
 import logging
@@ -15,7 +16,13 @@ logger = logging.getLogger(__name__)
 # Create Tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title=settings.PROJECT_NAME)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    logger.info("Application starting up...")
+    yield
+
+app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 
 # Include Routers
 app.include_router(client.router, prefix=settings.API_V1_STR, tags=["Client"])
@@ -32,11 +39,6 @@ class UserAdmin(ModelView, model=AdminUser):
 
 admin.add_view(SubscriptionAdmin)
 admin.add_view(UserAdmin)
-
-@app.on_event("startup")
-async def startup_event():
-    start_scheduler()
-    logger.info("Application starting up...")
 
 @app.get("/")
 def read_root():
