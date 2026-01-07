@@ -15,7 +15,9 @@ dependencies = [
     "passlib[bcrypt]",
     "sqladmin>=0.16.0",
     "pydantic-settings",
-    "requests"
+    "requests",
+    "pytest>=7.0.0",
+    "httpx>=0.24.0"
 ]
 
 [build-system]

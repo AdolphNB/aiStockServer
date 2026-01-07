@@ -6,6 +6,8 @@ akshare>=1.10.0
 apscheduler>=3.10.0
 python-multipart
 python-jose[cryptography]
+pytest>=7.0.0
+httpx>=0.24.0
 passlib[bcrypt]
 sqladmin>=0.16.0
 pydantic-settings
