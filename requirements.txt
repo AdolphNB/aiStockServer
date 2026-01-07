@@ -1,0 +1,13 @@
+fastapi>=0.100.0
+uvicorn>=0.23.0
+sqlalchemy>=2.0.0
+gunicorn>=21.0.0
+akshare>=1.10.0
+apscheduler>=3.10.0
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+sqladmin>=0.16.0
+pydantic-settings
+requests
+# uv is recommended for installation but not strictly a runtime requirement
