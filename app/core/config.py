@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = int(os.getenv("PORT", "8000"))  # Default to port 8000, can be overridden by PORT env var
+    SERVER_URL: str = os.getenv("SERVER_URL", "http://www.mcptools.xin")  # Public server URL
     
     # Security
     SECRET_KEY: str = "CHANGE_THIS_IN_PRODUCTION_SECRET_KEY"
@@ -20,6 +21,22 @@ class Settings(BaseSettings):
     # Admin
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin"
+    
+    # WeChat Pay Configuration
+    WECHAT_APPID: str = os.getenv("WECHAT_APPID", "")  # WeChat App ID
+    WECHAT_MCHID: str = os.getenv("WECHAT_MCHID", "")  # Merchant ID
+    WECHAT_API_KEY: str = os.getenv("WECHAT_API_KEY", "")  # API Key (v2)
+    WECHAT_API_V3_KEY: str = os.getenv("WECHAT_API_V3_KEY", "")  # API v3 Key
+    WECHAT_CERT_SERIAL_NO: str = os.getenv("WECHAT_CERT_SERIAL_NO", "")  # Certificate serial number
+    WECHAT_PRIVATE_KEY_PATH: str = os.getenv("WECHAT_PRIVATE_KEY_PATH", "")  # Path to private key file
+    
+    # Payment settings
+    PLAN_PRICES: dict = {
+        "1m": 29.90,
+        "3m": 79.90,
+        "6m": 149.90,
+        "12m": 269.90
+    }
     
     class Config:
         case_sensitive = True

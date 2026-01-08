@@ -1,9 +1,10 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime, time
+from datetime import datetime, time, date
 import logging
 
 from app.services.fetcher import fetch_market_data, fetch_sse_summary
+from app.services.trading_calendar import get_trading_calendar_service
 
 logger = logging.getLogger(__name__)
 
@@ -11,9 +12,15 @@ scheduler = AsyncIOScheduler()
 
 def is_trading_time():
     """
-    Simple check for trading hours (09:30-11:30, 13:00-15:00).
-    Note: This doesn't account for holidays.
+    Check if current time is within trading hours and is a trading day
+    Trading hours: 09:30-11:30, 13:00-15:00 on trading days
     """
+    # Check if today is a trading day
+    trading_calendar = get_trading_calendar_service()
+    if not trading_calendar.is_trading_day(date.today()):
+        return False
+    
+    # Check trading hours
     now = datetime.now().time()
     morning_start = time(9, 30)
     morning_end = time(11, 30)

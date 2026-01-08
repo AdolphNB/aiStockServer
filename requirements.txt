@@ -11,5 +11,6 @@ httpx>=0.24.0
 passlib[bcrypt]
 sqladmin>=0.16.0
 pydantic-settings
-requests
+requests>=2.31.0
+lxml>=4.9.0
 # uv is recommended for installation but not strictly a runtime requirement
