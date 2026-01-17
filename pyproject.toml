@@ -2,13 +2,16 @@
 name = "remote-server"
 version = "0.1.0"
 description = "AIStock Remote Server Data Hub"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
     "sqlalchemy>=2.0.0",
     "gunicorn>=21.0.0",
+    "numpy<2.3.0",
+    "pandas>=1.5.0",
     "akshare>=1.10.0",
+    "pandas-ta>=0.3.14b0",
     "apscheduler>=3.10.0",
     "python-multipart",
     "python-jose[cryptography]",

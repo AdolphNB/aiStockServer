@@ -3,7 +3,7 @@ from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime, time, date
 import logging
 
-from app.services.fetcher import fetch_market_data, fetch_sse_summary
+from app.services.fetcher import fetch_market_data, fetch_sse_summary, fetch_realtime_stock_data, get_watched_stocks
 from app.services.trading_calendar import get_trading_calendar_service
 
 logger = logging.getLogger(__name__)
@@ -47,10 +47,25 @@ async def tick_sse_summary():
     """
     fetch_sse_summary()
 
+async def tick_realtime_stocks():
+    """
+    Scheduled job to fetch realtime stock data for watched stocks.
+    Only runs during trading hours.
+    """
+    if is_trading_time():
+        watched = get_watched_stocks()
+        if watched:
+            fetch_realtime_stock_data(watched)
+    else:
+        # logger.debug("Not trading time, skipping realtime stock fetch.")
+        pass
+
 def start_scheduler():
     # Run market data fetch every 60 seconds during trading hours
     scheduler.add_job(tick, 'interval', seconds=60)
     # Run SSE summary fetch every 60 seconds
     scheduler.add_job(tick_sse_summary, 'interval', seconds=60)
+    # Run realtime stock data fetch every 30 seconds during trading hours
+    scheduler.add_job(tick_realtime_stocks, 'interval', seconds=30)
     scheduler.start()
     logger.info("Scheduler started.")
