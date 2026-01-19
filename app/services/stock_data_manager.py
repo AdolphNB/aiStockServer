@@ -359,6 +359,21 @@ class StockDataManager:
     
     # ==================== Stock Changes Management ====================
     
+    def load_stock_changes(self) -> bool:
+        """Load stock changes data from file"""
+        with self.stock_changes_lock:
+            try:
+                file_path = self.data_dir / "stock_changes" / "stock_changes_latest.csv"
+                if file_path.exists():
+                    self.stock_changes = pd.read_csv(file_path)
+                    self.stock_changes_last_updated = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    logger.info(f"Loaded stock changes data: {len(self.stock_changes)} records")
+                    return True
+                return False
+            except Exception as e:
+                logger.error(f"Error loading stock changes data: {e}")
+                return False
+
     def fetch_stock_changes(self) -> bool:
         """Fetch stock changes data for all change types and overwrite existing data"""
         with self.stock_changes_lock:
