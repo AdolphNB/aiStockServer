@@ -155,3 +155,9 @@ def start_scheduler():
     
     scheduler.start()
     logger.info("Scheduler started with new stock data tasks.")
+
+def stop_scheduler():
+    """Stop the scheduler gracefully"""
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+        logger.info("Scheduler stopped.")

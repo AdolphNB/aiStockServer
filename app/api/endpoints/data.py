@@ -22,17 +22,58 @@ def dataframe_to_json_response(df: Optional[pd.DataFrame], message: str = "succe
             "data": None
         }
     
+    # Create a copy to avoid modifying the original
+    df_clean = df.copy()
+    
     # Replace NaN, inf, and -inf with None for JSON compliance
-    df_clean = df.replace([float('inf'), float('-inf')], None)
+    df_clean = df_clean.replace([float('inf'), float('-inf')], None)
     df_clean = df_clean.where(pd.notna(df_clean), None)
+    
+    # Convert DataFrame to dict using 'split' orientation
+    # This gives us {index, columns, data} format
+    # Using date_format='iso' to handle datetime types
+    df_dict = df_clean.to_dict(orient='split')
+    
+    # Ensure index is JSON serializable (convert any remaining special types)
+    index_list = []
+    for idx in df_dict['index']:
+        if isinstance(idx, (int, float, str, bool)) or idx is None:
+            index_list.append(idx)
+        else:
+            # Convert any other type (like numpy types) to Python native
+            try:
+                index_list.append(int(idx))
+            except (ValueError, TypeError):
+                index_list.append(str(idx))
+    
+    # Ensure data values are JSON serializable
+    data_list = []
+    for row in df_dict['data']:
+        row_list = []
+        for val in row:
+            if val is None:
+                row_list.append(None)
+            elif isinstance(val, (int, float, str, bool)):
+                row_list.append(val)
+            else:
+                # Convert numpy/pandas types to Python native types
+                try:
+                    # Try numeric conversion first
+                    if hasattr(val, 'item'):  # numpy scalar
+                        row_list.append(val.item())
+                    else:
+                        row_list.append(str(val))
+                except (ValueError, TypeError, AttributeError):
+                    row_list.append(str(val))
+        data_list.append(row_list)
     
     return {
         "code": 200,
         "message": message,
         "data": {
-            "columns": df_clean.columns.tolist(),
-            "index": df_clean.index.tolist(),
-            "data": df_clean.values.tolist()
+            "columns": df_dict['columns'],
+            "index": index_list,
+            "data": data_list
         }
     }
 

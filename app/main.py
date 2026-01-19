@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.models.models import Subscription, AdminUser, PaymentOrder
 from app.api.endpoints import client, payment, data
-from app.services.scheduler import start_scheduler
+from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.fetcher import fetch_sse_summary
 from app.services.stock_data_manager import get_stock_data_manager
 
@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
     
     logger.info("Application starting up...")
     yield
+    
+    # Cleanup on shutdown
+    logger.info("Application shutting down...")
+    stop_scheduler()
+    logger.info("Scheduler stopped, application shutdown complete.")
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 
