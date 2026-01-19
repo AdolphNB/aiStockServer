@@ -3,6 +3,7 @@ import logging
 import threading
 from datetime import datetime
 from typing import List, Optional, Set
+import pandas as pd
 
 # Global In-Memory Cache
 market_data_cache = {
@@ -20,6 +21,20 @@ watched_stocks: Set[str] = set()
 watched_stocks_lock = threading.Lock()
 
 logger = logging.getLogger(__name__)
+
+def clean_dataframe_for_json(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean DataFrame to ensure JSON compliance by replacing NaN/inf values with None
+    
+    Args:
+        df: DataFrame to clean
+        
+    Returns:
+        Cleaned DataFrame
+    """
+    df_clean = df.replace([float('inf'), float('-inf')], None)
+    df_clean = df_clean.where(pd.notna(df_clean), None)
+    return df_clean
 
 def add_watched_stock(stock_code: str):
     """Add a stock to the watch list for realtime data fetching."""
@@ -49,8 +64,9 @@ def fetch_market_data():
         # 1. Market Activity (Legu) - 赚钱效应
         stock_market_activity_legu_df = ak.stock_market_activity_legu()
         
-        # Convert to dict for JSON serialization
-        data = stock_market_activity_legu_df.to_dict(orient="records")
+        # Clean DataFrame and convert to dict for JSON serialization
+        df_clean = clean_dataframe_for_json(stock_market_activity_legu_df)
+        data = df_clean.to_dict(orient="records")
         
         with data_lock:
             market_data_cache["market_activity"] = data
@@ -72,8 +88,9 @@ def fetch_sse_summary():
         # Fetch SSE summary data
         stock_sse_summary_df = ak.stock_sse_summary()
         
-        # Convert to dict for JSON serialization
-        data = stock_sse_summary_df.to_dict(orient="records")
+        # Clean DataFrame and convert to dict for JSON serialization
+        df_clean = clean_dataframe_for_json(stock_sse_summary_df)
+        data = df_clean.to_dict(orient="records")
         
         with data_lock:
             market_data_cache["sse_summary"] = data
@@ -107,24 +124,36 @@ def fetch_realtime_stock_data(stock_codes: List[str]):
             # Find the stock in the dataframe
             stock_row = stock_zh_a_spot_em_df[stock_zh_a_spot_em_df['代码'] == code]
             if not stock_row.empty:
-                stock_dict = stock_row.iloc[0].to_dict()
+                # Clean the row before converting to dict
+                stock_row_clean = clean_dataframe_for_json(stock_row)
+                stock_dict = stock_row_clean.iloc[0].to_dict()
+                
+                # Helper function to safely convert to float, handling None
+                def safe_float(value, default=0):
+                    if value is None or (isinstance(value, float) and pd.isna(value)):
+                        return None
+                    try:
+                        return float(value)
+                    except (ValueError, TypeError):
+                        return default
+                
                 realtime_data[code] = {
                     "code": code,
                     "name": stock_dict.get("名称", ""),
-                    "price": float(stock_dict.get("最新价", 0)),
-                    "change_percent": float(stock_dict.get("涨跌幅", 0)),
-                    "change_amount": float(stock_dict.get("涨跌额", 0)),
-                    "volume": float(stock_dict.get("成交量", 0)),
-                    "amount": float(stock_dict.get("成交额", 0)),
-                    "amplitude": float(stock_dict.get("振幅", 0)),
-                    "high": float(stock_dict.get("最高", 0)),
-                    "low": float(stock_dict.get("最低", 0)),
-                    "open": float(stock_dict.get("今开", 0)),
-                    "close_prev": float(stock_dict.get("昨收", 0)),
-                    "volume_ratio": float(stock_dict.get("量比", 0)),
-                    "turnover_rate": float(stock_dict.get("换手率", 0)),
-                    "pe_ratio": float(stock_dict.get("市盈率-动态", 0)) if stock_dict.get("市盈率-动态") else 0,
-                    "pb_ratio": float(stock_dict.get("市净率", 0)) if stock_dict.get("市净率") else 0,
+                    "price": safe_float(stock_dict.get("最新价")),
+                    "change_percent": safe_float(stock_dict.get("涨跌幅")),
+                    "change_amount": safe_float(stock_dict.get("涨跌额")),
+                    "volume": safe_float(stock_dict.get("成交量")),
+                    "amount": safe_float(stock_dict.get("成交额")),
+                    "amplitude": safe_float(stock_dict.get("振幅")),
+                    "high": safe_float(stock_dict.get("最高")),
+                    "low": safe_float(stock_dict.get("最低")),
+                    "open": safe_float(stock_dict.get("今开")),
+                    "close_prev": safe_float(stock_dict.get("昨收")),
+                    "volume_ratio": safe_float(stock_dict.get("量比")),
+                    "turnover_rate": safe_float(stock_dict.get("换手率")),
+                    "pe_ratio": safe_float(stock_dict.get("市盈率-动态")),
+                    "pb_ratio": safe_float(stock_dict.get("市净率")),
                 }
         
         with data_lock:
@@ -163,21 +192,32 @@ def fetch_stock_kline(stock_code: str, period: str = "daily", adjust: str = "qfq
         if len(stock_zh_a_hist_df) > days:
             stock_zh_a_hist_df = stock_zh_a_hist_df.tail(days)
         
-        # Convert to list of dictionaries
+        # Clean DataFrame and convert to list of dictionaries
+        df_clean = clean_dataframe_for_json(stock_zh_a_hist_df)
+        
+        # Helper function to safely convert to float, handling None
+        def safe_float(value, default=None):
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return default
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return default
+        
         kline_data = []
-        for _, row in stock_zh_a_hist_df.iterrows():
+        for _, row in df_clean.iterrows():
             kline_data.append({
                 "date": row["日期"],
-                "open": float(row["开盘"]),
-                "close": float(row["收盘"]),
-                "high": float(row["最高"]),
-                "low": float(row["最低"]),
-                "volume": float(row["成交量"]),
-                "amount": float(row["成交额"]),
-                "amplitude": float(row["振幅"]) if "振幅" in row else 0,
-                "change_percent": float(row["涨跌幅"]) if "涨跌幅" in row else 0,
-                "change_amount": float(row["涨跌额"]) if "涨跌额" in row else 0,
-                "turnover_rate": float(row["换手率"]) if "换手率" in row else 0,
+                "open": safe_float(row["开盘"]),
+                "close": safe_float(row["收盘"]),
+                "high": safe_float(row["最高"]),
+                "low": safe_float(row["最低"]),
+                "volume": safe_float(row["成交量"]),
+                "amount": safe_float(row["成交额"]),
+                "amplitude": safe_float(row["振幅"]) if "振幅" in row else None,
+                "change_percent": safe_float(row["涨跌幅"]) if "涨跌幅" in row else None,
+                "change_amount": safe_float(row["涨跌额"]) if "涨跌额" in row else None,
+                "turnover_rate": safe_float(row["换手率"]) if "换手率" in row else None,
             })
         
         logger.info(f"Fetched {len(kline_data)} K-line records for {stock_code}")

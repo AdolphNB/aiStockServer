@@ -22,13 +22,17 @@ def dataframe_to_json_response(df: Optional[pd.DataFrame], message: str = "succe
             "data": None
         }
     
+    # Replace NaN, inf, and -inf with None for JSON compliance
+    df_clean = df.replace([float('inf'), float('-inf')], None)
+    df_clean = df_clean.where(pd.notna(df_clean), None)
+    
     return {
         "code": 200,
         "message": message,
         "data": {
-            "columns": df.columns.tolist(),
-            "index": df.index.tolist(),
-            "data": df.values.tolist()
+            "columns": df_clean.columns.tolist(),
+            "index": df_clean.index.tolist(),
+            "data": df_clean.values.tolist()
         }
     }
 
