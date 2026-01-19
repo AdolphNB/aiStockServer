@@ -371,20 +371,45 @@ class StockDataManager:
             if stock_code:
                 # Check actual column name from logs or debugging
                 # Usually it's "代码" or "股票代码"
+                col_name = None
                 if '代码' in self.fund_flow.columns:
                     col_name = '代码'
                 elif '股票代码' in self.fund_flow.columns:
                     col_name = '股票代码'
                 else:
+                    # Try to find a column that looks like code
+                    for col in self.fund_flow.columns:
+                        if '代码' in col or 'code' in col.lower():
+                            col_name = col
+                            break
+                
+                if not col_name:
                     # Fallback or error logging
                     logger.error(f"Cannot filter fund flow: '代码' column not found. Columns: {self.fund_flow.columns.tolist()}")
                     return None
 
+                # Normalize stock code: ensure 6 digits (e.g., "1" -> "000001")
+                try:
+                    target_code = "{:06d}".format(int(stock_code))
+                except ValueError:
+                    target_code = str(stock_code)
+
                 # Filter by stock code
-                # Ensure types match (convert to str)
-                self.fund_flow[col_name] = self.fund_flow[col_name].astype(str)
-                filtered = self.fund_flow[self.fund_flow[col_name] == str(stock_code)]
-                return filtered.copy() if len(filtered) > 0 else None
+                # Ensure dataframe column is string type and padded
+                # Use a copy to avoid SettingWithCopyWarning on the original dataframe
+                df_copy = self.fund_flow.copy()
+                
+                # Helper to normalize code in dataframe
+                def normalize_code(val):
+                    try:
+                        return "{:06d}".format(int(val))
+                    except (ValueError, TypeError):
+                        return str(val)
+
+                df_copy[col_name] = df_copy[col_name].apply(normalize_code)
+                
+                filtered = df_copy[df_copy[col_name] == target_code]
+                return filtered if len(filtered) > 0 else None
             
             return self.fund_flow.copy()
     
