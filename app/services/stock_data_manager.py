@@ -369,8 +369,21 @@ class StockDataManager:
                 return None
             
             if stock_code:
+                # Check actual column name from logs or debugging
+                # Usually it's "代码" or "股票代码"
+                if '代码' in self.fund_flow.columns:
+                    col_name = '代码'
+                elif '股票代码' in self.fund_flow.columns:
+                    col_name = '股票代码'
+                else:
+                    # Fallback or error logging
+                    logger.error(f"Cannot filter fund flow: '代码' column not found. Columns: {self.fund_flow.columns.tolist()}")
+                    return None
+
                 # Filter by stock code
-                filtered = self.fund_flow[self.fund_flow['代码'] == stock_code]
+                # Ensure types match (convert to str)
+                self.fund_flow[col_name] = self.fund_flow[col_name].astype(str)
+                filtered = self.fund_flow[self.fund_flow[col_name] == str(stock_code)]
                 return filtered.copy() if len(filtered) > 0 else None
             
             return self.fund_flow.copy()
