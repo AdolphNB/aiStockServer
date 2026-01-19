@@ -5,6 +5,7 @@ Provides REST API for stock data access
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 import pandas as pd
+import numpy as np
 import logging
 
 from app.services.stock_data_manager import get_stock_data_manager
@@ -25,8 +26,11 @@ def dataframe_to_json_response(df: Optional[pd.DataFrame], message: str = "succe
     # Create a copy to avoid modifying the original
     df_clean = df.copy()
     
+    # Convert to object type to allow replacing primitives with None
+    df_clean = df_clean.astype(object)
+    
     # Replace NaN, inf, and -inf with None for JSON compliance
-    df_clean = df_clean.replace([float('inf'), float('-inf')], None)
+    df_clean = df_clean.replace([float('inf'), float('-inf'), np.inf, -np.inf], None)
     df_clean = df_clean.where(pd.notna(df_clean), None)
     
     # Convert DataFrame to dict using 'split' orientation

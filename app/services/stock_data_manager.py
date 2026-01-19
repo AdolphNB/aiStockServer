@@ -347,6 +347,9 @@ class StockDataManager:
                 logger.info("Fetching fund flow data...")
                 
                 self.fund_flow = ak.stock_fund_flow_individual(symbol="即时")
+                if self.fund_flow is not None and not self.fund_flow.empty:
+                    logger.info(f"Fund flow columns: {self.fund_flow.columns.tolist()}")
+                
                 self.fund_flow_last_updated = datetime.now()
                 
                 # Save to file
