@@ -198,3 +198,103 @@ async def get_data_status():
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/data/fetch/stock-list")
+async def trigger_fetch_stock_list():
+    """
+    Manually trigger stock list fetch (for testing/initialization).
+    
+    **Returns:**
+    Success status
+    """
+    try:
+        manager = get_stock_data_manager()
+        success = manager.fetch_stock_list()
+        
+        return {
+            "code": 200 if success else 500,
+            "message": "Stock list fetched successfully" if success else "Failed to fetch stock list",
+            "data": {
+                "count": len(manager.get_stock_list()) if success else 0
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching stock list: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/data/fetch/realtime")
+async def trigger_fetch_realtime():
+    """
+    Manually trigger realtime data fetch (for testing).
+    
+    **Returns:**
+    Success status
+    """
+    try:
+        manager = get_stock_data_manager()
+        success = manager.fetch_realtime_data()
+        
+        return {
+            "code": 200 if success else 500,
+            "message": "Realtime data fetched successfully" if success else "Failed to fetch realtime data",
+            "data": {
+                "count": len(manager.kline_realtime)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching realtime data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/data/fetch/fund-flow")
+async def trigger_fetch_fund_flow():
+    """
+    Manually trigger fund flow data fetch (for testing).
+    
+    **Returns:**
+    Success status
+    """
+    try:
+        manager = get_stock_data_manager()
+        success = manager.fetch_fund_flow()
+        
+        return {
+            "code": 200 if success else 500,
+            "message": "Fund flow data fetched successfully" if success else "Failed to fetch fund flow data",
+            "data": {
+                "count": len(manager.fund_flow) if success and manager.fund_flow is not None else 0
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching fund flow data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/data/fetch/stock-changes")
+async def trigger_fetch_stock_changes():
+    """
+    Manually trigger stock changes data fetch (for testing).
+    
+    **Returns:**
+    Success status
+    """
+    try:
+        manager = get_stock_data_manager()
+        success = manager.fetch_stock_changes()
+        
+        return {
+            "code": 200 if success else 500,
+            "message": "Stock changes data fetched successfully" if success else "Failed to fetch stock changes data",
+            "data": {
+                "count": len(manager.stock_changes) if success and manager.stock_changes is not None else 0
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching stock changes data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

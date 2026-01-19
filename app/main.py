@@ -42,9 +42,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 
 # Include Routers
+# IMPORTANT: Register data.router BEFORE client.router to avoid route conflicts
+# data.router has /data/kline/real which would be caught by client.router's /data/kline/{stock_code}
+app.include_router(data.router, prefix=settings.API_V1_STR, tags=["Stock Data"])
 app.include_router(client.router, prefix=settings.API_V1_STR, tags=["Client"])
 app.include_router(payment.router, prefix=f"{settings.API_V1_STR}/payment", tags=["Payment"])
-app.include_router(data.router, prefix=settings.API_V1_STR, tags=["Stock Data"])
 
 # Admin Interface
 admin = Admin(app, engine)
