@@ -216,6 +216,30 @@ class StockDataManager:
     
     # ==================== Realtime K-Line Management ====================
     
+    def load_realtime_data(self) -> int:
+        """Load realtime data from files"""
+        with self.kline_realtime_lock:
+            loaded_count = 0
+            realtime_dir = self.data_dir / "kline_realtime"
+            if not realtime_dir.exists():
+                return 0
+                
+            for csv_file in realtime_dir.glob("*.csv"):
+                try:
+                    stock_code = csv_file.stem
+                    df = pd.read_csv(csv_file)
+                    self.kline_realtime[stock_code] = df
+                    # Set timestamp to file modification time if not already set
+                    if not self.kline_realtime_last_updated:
+                        self.kline_realtime_last_updated = datetime.fromtimestamp(csv_file.stat().st_mtime)
+                    loaded_count += 1
+                except Exception as e:
+                    logger.error(f"Error loading realtime data for {csv_file.stem}: {e}")
+            
+            if loaded_count > 0:
+                logger.info(f"Loaded realtime data for {loaded_count} stocks")
+            return loaded_count
+
     def fetch_realtime_data(self) -> bool:
         """
         Fetch realtime data for all stocks and split by stock code.

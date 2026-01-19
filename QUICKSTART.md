@@ -51,21 +51,33 @@ python test_new_api.py
 ```bash
 # 1. 获取系统状态
 curl http://localhost:8000/api/v1/data/status
+curl http://www.mcptools.xin:8000/api/v1/data/status
+
 
 # 2. 获取股票列表
 curl http://localhost:8000/api/v1/data/stock-list
+curl http://www.mcptools.xin:8000/api/v1/data/stock-list
+
 
 # 3. 获取历史K线（平安银行）
 curl "http://localhost:8000/api/v1/data/kline?symbol=000001"
+curl "http://www.mcptools.xin:8000/api/v1/data/kline?symbol=000001"
+
 
 # 4. 获取实时分时数据
 curl "http://localhost:8000/api/v1/data/kline/real?symbol=000001"
+curl "http://www.mcptools.xin:8000/api/v1/data/kline/real?symbol=000001"
+
 
 # 5. 获取资金流向
 curl "http://localhost:8000/api/v1/data/fund-flow?symbol=000001"
+curl "http://www.mcptools.xin:8000/api/v1/data/fund-flow?symbol=000001"
 
 # 6. 获取盘口异动
 curl "http://localhost:8000/api/v1/data/stock-changes?symbol=000001"
+curl "http://www.mcptools.xin:8000/api/v1/data/stock-changes?symbol=000001"
+
+
 ```
 
 ### 使用Python测试

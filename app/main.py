@@ -30,6 +30,26 @@ async def lifespan(app: FastAPI):
     # Load daily K-lines
     manager.load_daily_klines(days=settings.KLINE_DAYS)
     
+    # Load realtime data, fund flow and stock changes from backup
+    # If no local data exists, fetch from source automatically (even outside trading hours) for development convenience
+    
+    # 1. Realtime K-line Data
+    if manager.load_realtime_data() == 0:
+        logger.info("No local realtime data found, fetching from source...")
+        if manager.fetch_realtime_data():
+            manager.save_realtime_data_to_file()
+            logger.info("Realtime data fetched and saved to local cache")
+    
+    # 2. Fund Flow Data
+    if not manager.load_fund_flow():
+        logger.info("No local fund flow data found, fetching from source...")
+        manager.fetch_fund_flow()
+        
+    # 3. Stock Changes Data
+    if not manager.load_stock_changes():
+        logger.info("No local stock changes data found, fetching from source...")
+        manager.fetch_stock_changes()
+    
     # Fetch SSE summary data immediately on startup
     fetch_sse_summary()
     
