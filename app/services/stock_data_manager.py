@@ -452,9 +452,41 @@ class StockDataManager:
                 return None
             
             if stock_code:
+                # Ensure correct column name for code
+                col_name = '代码' if '代码' in self.stock_changes.columns else 'code'
+                if col_name not in self.stock_changes.columns:
+                    # Try to find a column that looks like code
+                    for col in self.stock_changes.columns:
+                        if '代码' in col or 'code' in col.lower():
+                            col_name = col
+                            break
+                
+                if col_name not in self.stock_changes.columns:
+                    logger.error(f"Cannot filter stock changes: code column not found. Columns: {self.stock_changes.columns.tolist()}")
+                    return None
+
+                # Normalize stock code: ensure 6 digits (e.g., "1" -> "000001")
+                try:
+                    target_code = "{:06d}".format(int(stock_code))
+                except ValueError:
+                    target_code = str(stock_code)
+                
                 # Filter by stock code
-                filtered = self.stock_changes[self.stock_changes['代码'] == stock_code]
-                return filtered.copy() if len(filtered) > 0 else None
+                # Ensure dataframe column is string type and padded
+                # Use a copy to avoid SettingWithCopyWarning on the original dataframe
+                df_copy = self.stock_changes.copy()
+                
+                # Helper to normalize code in dataframe
+                def normalize_code(val):
+                    try:
+                        return "{:06d}".format(int(val))
+                    except (ValueError, TypeError):
+                        return str(val)
+
+                df_copy[col_name] = df_copy[col_name].apply(normalize_code)
+                
+                filtered = df_copy[df_copy[col_name] == target_code]
+                return filtered if len(filtered) > 0 else None
             
             return self.stock_changes.copy()
     
