@@ -325,6 +325,21 @@ class StockDataManager:
     
     # ==================== Fund Flow Management ====================
     
+    def load_fund_flow(self) -> bool:
+        """Load fund flow data from file"""
+        with self.fund_flow_lock:
+            try:
+                file_path = self.data_dir / "fund_flow" / "fund_flow_latest.csv"
+                if file_path.exists():
+                    self.fund_flow = pd.read_csv(file_path)
+                    self.fund_flow_last_updated = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    logger.info(f"Loaded fund flow data: {len(self.fund_flow)} records")
+                    return True
+                return False
+            except Exception as e:
+                logger.error(f"Error loading fund flow data: {e}")
+                return False
+
     def fetch_fund_flow(self) -> bool:
         """Fetch fund flow data and overwrite existing data"""
         with self.fund_flow_lock:
