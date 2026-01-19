@@ -6,9 +6,10 @@ import logging
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.models.models import Subscription, AdminUser, PaymentOrder
-from app.api.endpoints import client, payment
+from app.api.endpoints import client, payment, data
 from app.services.scheduler import start_scheduler
 from app.services.fetcher import fetch_sse_summary
+from app.services.stock_data_manager import get_stock_data_manager
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -19,9 +20,22 @@ Base.metadata.create_all(bind=engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize stock data manager and load data
+    logger.info("Initializing stock data manager...")
+    manager = get_stock_data_manager()
+    
+    # Load stock list
+    manager.load_stock_list()
+    
+    # Load daily K-lines
+    manager.load_daily_klines(days=settings.KLINE_DAYS)
+    
     # Fetch SSE summary data immediately on startup
     fetch_sse_summary()
+    
+    # Start scheduler
     start_scheduler()
+    
     logger.info("Application starting up...")
     yield
 
@@ -30,6 +44,7 @@ app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 # Include Routers
 app.include_router(client.router, prefix=settings.API_V1_STR, tags=["Client"])
 app.include_router(payment.router, prefix=f"{settings.API_V1_STR}/payment", tags=["Payment"])
+app.include_router(data.router, prefix=settings.API_V1_STR, tags=["Stock Data"])
 
 # Admin Interface
 admin = Admin(app, engine)
@@ -63,6 +78,8 @@ def health_check():
     
     data = get_latest_market_data()
     trading_calendar = get_trading_calendar_service()
+    manager = get_stock_data_manager()
+    stock_data_status = manager.get_status()
     
     return {
         "status": "running",
@@ -72,7 +89,8 @@ def health_check():
         "has_sse_summary": data.get("sse_summary") is not None,
         "sse_summary_last_updated": data.get("sse_summary_last_updated"),
         "is_trading_day": trading_calendar.is_trading_day(date.today()),
-        "trading_calendar_cache": trading_calendar.get_cache_info()
+        "trading_calendar_cache": trading_calendar.get_cache_info(),
+        "stock_data": stock_data_status
     }
 
 @app.get("/sse-summary")

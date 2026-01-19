@@ -38,6 +38,13 @@ class Settings(BaseSettings):
         "12m": 269.90
     }
     
+    # Stock Data Settings
+    DATA_DIR: str = "data"  # Directory for data storage
+    KLINE_DAYS: int = 90  # Number of days to keep for daily K-line data
+    REALTIME_FETCH_INTERVAL: int = 60  # Seconds between realtime data fetches
+    FUND_FLOW_FETCH_INTERVAL: int = 300  # Seconds between fund flow fetches (5 minutes)
+    STOCK_CHANGES_FETCH_INTERVAL: int = 300  # Seconds between stock changes fetches (5 minutes)
+    
     class Config:
         case_sensitive = True
 

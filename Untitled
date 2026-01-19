@@ -1,0 +1,82 @@
+我现在需求增加几个API接口，这些接口可以通过http://www.mcptools.xin 访问,具体要求如下：
+1. 历史K线数据获取。
+因为历史K线不需要每次都获取，如果本地存在，就不需要再次获取；
+获取单只股票的函数如下：
+stock_zh_a_hist_df = ak.stock_zh_a_hist(symbol="000001", period="daily", start_date="20170301", end_date='20240528', adjust="qfq")
+
+以下接口会提供所有的股票列表，作为ak.stock_zh_a_hist的symbol的参数。
+stock_info_a_code_name = ak.stock_info_a_code_name()
+ak.stock_info_a_code_name()接口，每周调用一次，每次启动服务时，读取到dataframe变量中，然后根据这些股票代码，读取最近90日的K线数据；
+
+- 请求数据：
+  客户请求时，传入股票代码，就分传回最近90个交易日的K线数据；
+  请求方式：http://www.mcptools.xin/api/v1/data/kline?symbol=000001
+
+
+2. 实时K线数据获取。
+- stock_zh_a_spot_em_df = ak.stock_zh_a_spot_em()
+- 根据ak.stock_info_a_code_name()接口，查找是否存在对应代码的文件，存在的话，就将最近从ak.stock_zh_a_spot_em()获取的对应代码最近的数据写入到文件中；
+- 代码还会根据每只股票的代码，从ak.stock_info_a_code_name()接口中获取股票code，将当前每次获取的最新数据写入到文件中；这样就形成了当天1分钟线数据，每个股票一个文件，文件名称为股票代码。
+
+- 请求数据：
+  客户请求时，传入股票代码，就分传回当天1分钟线数据；
+  请求方式：http://www.mcptools.xin/api/v1/data/kline/real?symbol=000001
+
+3. 资金流向数据获取。
+stock_fund_flow_individual_df = ak.stock_fund_flow_individual(symbol="即时")
+
+4. 赚钱效应数据获取。
+stock_market_activity_legu_df = ak.stock_market_activity_legu()
+
+5. 筹码分布
+stock_cyq_em_df = ak.stock_cyq_em(symbol="000001")
+
+6. 盘口异动
+stock_changes_em_df = ak.stock_changes_em(symbol="000001")
+
+
+
+
+
+
+## 5. 筹码分布
+
+### 数据源接口
+```python
+# 获取个股筹码分布
+stock_cyq_em_df = ak.stock_cyq_em(symbol="000001")
+```
+
+### 数据更新策略
+- **开市时间内**每 **5 分钟**读取一次数据
+- 将数据缓存到本地，按股票代码索引
+- 当有请求时，根据请求的股票代码返回对应的数据
+
+### API 接口
+- **请求方式**: GET
+- **请求地址**: `http://www.mcptools.xin/api/v1/data/chip-distribution?symbol=000001`
+- **请求参数**: 
+  - `symbol`: 股票代码
+- **返回数据**: 个股筹码分布数据
+
+---
+
+
+## 4. 赚钱效应数据获取
+
+### 数据源接口
+```python
+# 获取市场赚钱效应数据
+stock_market_activity_legu_df = ak.stock_market_activity_legu()
+```
+
+### 数据更新策略
+- **开市时间内**每 **5 分钟**读取一次数据
+- 将数据缓存到本地
+
+### API 接口
+- **请求方式**: GET
+- **请求地址**: `http://www.mcptools.xin/api/v1/data/market-activity`
+- **返回数据**: 市场赚钱效应数据
+
+---
