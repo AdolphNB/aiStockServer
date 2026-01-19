@@ -17,16 +17,20 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ```bash
 # 1. 获取股票列表
-curl -X POST http://localhost:8000/api/v1/data/fetch/stock-list
+curl -X POST http://www.mcptools.xin:8000/api/v1/data/fetch/stock-list
+curl -X POST http://www.mcptools.xin:8000/api/v1/data/fetch/stock-list
 
 # 2. 获取实时数据（需要3-5秒）
 curl -X POST http://localhost:8000/api/v1/data/fetch/realtime
+curl -X POST http://www.mcptools.xin:8000/api/v1/data/fetch/realtime
 
 # 3. 获取资金流向
 curl -X POST http://localhost:8000/api/v1/data/fetch/fund-flow
+curl -X POST http://www.mcptools.xin:8000/api/v1/data/fetch/fund-flow
 
 # 4. 获取盘口异动
 curl -X POST http://localhost:8000/api/v1/data/fetch/stock-changes
+curl -X POST http://www.mcptools.xin:8000/api/v1/data/fetch/stock-changes
 ```
 
 ### 3. 验证数据状态
@@ -34,6 +38,7 @@ curl -X POST http://localhost:8000/api/v1/data/fetch/stock-changes
 ```bash
 # 查看系统状态
 curl http://localhost:8000/api/v1/data/status
+curl http://www.mcptools.xin:8000/api/v1/data/status
 ```
 
 ### 4. 测试查询接口
@@ -41,18 +46,23 @@ curl http://localhost:8000/api/v1/data/status
 ```bash
 # 获取股票列表
 curl http://localhost:8000/api/v1/data/stock-list
+curl http://www.mcptools.xin:8000/api/v1/data/stock-list
 
 # 获取历史K线（平安银行）
 curl "http://localhost:8000/api/v1/data/kline?symbol=000001"
+curl "http://www.mcptools.xin:8000/api/v1/data/kline?symbol=000001"
 
 # 获取实时分时数据
 curl "http://localhost:8000/api/v1/data/kline/real?symbol=000001"
+curl "http://www.mcptools.xin:8000/api/v1/data/kline/real?symbol=000001"
 
 # 获取资金流向
 curl "http://localhost:8000/api/v1/data/fund-flow?symbol=000001"
+curl "http://www.mcptools.xin:8000/api/v1/data/fund-flow?symbol=000001"
 
 # 获取盘口异动
 curl "http://localhost:8000/api/v1/data/stock-changes?symbol=000001"
+curl "http://www.mcptools.xin:8000/api/v1/data/stock-changes?symbol=000001"
 ```
 
 ## 完整测试流程
