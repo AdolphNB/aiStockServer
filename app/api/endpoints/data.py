@@ -2,7 +2,7 @@
 Stock Data API Endpoints
 Provides REST API for stock data access
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from typing import Optional
 import os
@@ -62,8 +62,22 @@ async def get_realtime_kline(
     Get today's realtime minute-level data for a stock.
     """
     try:
-        file_path = CACHE_DIR / "realtime" / f"{symbol}.csv"
+        manager = get_stock_data_manager()
         
+        # Try to get from SQLite DB (New high-performance way)
+        df = manager.get_realtime_kline_from_db(symbol)
+        
+        if df is not None:
+            # Convert to CSV string in memory
+            csv_data = df.to_csv(index=False, encoding='utf-8-sig')
+            return Response(
+                content=csv_data, 
+                media_type="text/csv", 
+                headers={"Content-Disposition": f"attachment; filename={symbol}_realtime.csv"}
+            )
+            
+        # Fallback to legacy file-based cache if available
+        file_path = CACHE_DIR / "realtime" / f"{symbol}.csv"
         if file_path.exists():
             return FileResponse(file_path, media_type="text/csv", filename=f"{symbol}_realtime.csv")
         
@@ -158,6 +172,14 @@ async def get_data_status():
         for folder in ["realtime", "market_snap", "fund_flow", "stock_changes", "stock_list", "kline_daily"]:
             folder_path = CACHE_DIR / folder
             if folder_path.exists():
+                # Avoid glob on realtime folder as it might have too many legacy files
+                if folder == "realtime":
+                    status["files"][folder] = {
+                        "mode": "SQLite DB",
+                        "db_path": str(CACHE_DIR / "realtime_cache.db")
+                    }
+                    continue
+                    
                 files = list(folder_path.glob("*.csv"))
                 status["files"][folder] = {
                     "count": len(files),

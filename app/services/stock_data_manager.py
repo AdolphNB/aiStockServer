@@ -8,6 +8,7 @@ import logging
 import threading
 import asyncio
 import os
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
 from pathlib import Path
@@ -77,7 +78,44 @@ class StockDataManager:
         ]
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize SQLite DB for realtime data
+        self.db_path = self.cache_dir / "realtime_cache.db"
+        self._init_db()
+        
         logger.info(f"Data and cache directories ensured")
+
+    def _init_db(self):
+        """Initialize the SQLite database and tables"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            # Use WAL mode for better concurrency
+            conn.execute("PRAGMA journal_mode=WAL")
+            # Create table for realtime tick data
+            # Store data as rows to easily append every minute
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS realtime_ticks (
+                    code TEXT,
+                    price REAL,
+                    volume REAL,
+                    amount REAL,
+                    high REAL,
+                    low REAL,
+                    open REAL,
+                    timestamp TEXT
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_code_time ON realtime_ticks (code, timestamp)")
+            conn.commit()
+            conn.close()
+            logger.info(f"SQLite database initialized at {self.db_path}")
+        except Exception as e:
+            logger.error(f"Error initializing SQLite DB: {e}")
+
+    def _get_db_conn(self):
+        """Get a connection to the SQLite database"""
+        conn = sqlite3.connect(self.db_path)
+        return conn
 
     def atomic_write_csv(self, df: pd.DataFrame, file_path: Path):
         """Write DataFrame to CSV atomically using a temporary file"""
@@ -342,24 +380,41 @@ class StockDataManager:
             return result
     
     def _calculate_today_kline(self, stock_code: str) -> Optional[pd.DataFrame]:
-        """Calculate today's K-line from realtime data"""
-        with self.kline_realtime_lock:
-            realtime_df = self.kline_realtime.get(stock_code)
-            if realtime_df is None or len(realtime_df) == 0:
-                return None
+        """Calculate today's K-line from realtime data in SQLite"""
+        try:
+            # Get latest tick from DB
+            conn = self._get_db_conn()
+            query = "SELECT * FROM realtime_ticks WHERE code = ? ORDER BY timestamp DESC LIMIT 1"
+            latest_df = pd.read_sql_query(query, conn, params=(stock_code,))
+            conn.close()
             
-            try:
-                # Use the LATEST snapshot as it contains cumulative data for the day
-                latest_row = realtime_df.iloc[-1]
+            if latest_df.empty:
+                # Fallback to in-memory if available
+                with self.kline_realtime_lock:
+                    realtime_df = self.kline_realtime.get(stock_code)
+                    if realtime_df is None or len(realtime_df) == 0:
+                        return None
+                    latest_row = realtime_df.iloc[-1]
+            else:
+                # Map DB columns back to what the logic expects
+                # DB columns: code, price, volume, amount, high, low, open, timestamp
+                row = latest_df.iloc[0]
+                latest_row = {
+                    '今开': row['open'],
+                    '最新价': row['price'],
+                    '最高': row['high'],
+                    '最低': row['low'],
+                    '成交量': row['volume'],
+                    '成交额': row['amount']
+                }
                 
-                # Extract values directly from realtime data fields
-                # These fields in ak.stock_zh_a_spot_em are already daily totals/stats
-                open_price = latest_row.get('今开', 0)
-                close_price = latest_row.get('最新价', 0)
-                high_price = latest_row.get('最高', 0)
-                low_price = latest_row.get('最低', 0)
-                volume = latest_row.get('成交量', 0)
-                amount = latest_row.get('成交额', 0)
+            # Extract values
+            open_price = latest_row.get('今开', 0)
+            close_price = latest_row.get('最新价', 0)
+            high_price = latest_row.get('最高', 0)
+            low_price = latest_row.get('最低', 0)
+            volume = latest_row.get('成交量', 0)
+            amount = latest_row.get('成交额', 0)
                 amplitude = latest_row.get('振幅', 0)
                 change_pct = latest_row.get('涨跌幅', 0)
                 change_amt = latest_row.get('涨跌额', 0)
@@ -447,11 +502,9 @@ class StockDataManager:
     
     async def fetch_realtime_data(self) -> bool:
         """
-        Fetch realtime data for all stocks and split by stock code (async version).
+        Fetch realtime data for all stocks and save to SQLite (async version).
         This should be called every 1 minute during trading hours.
-        Runs the blocking fetch operation in a thread pool.
         """
-        # Prevent concurrent fetching
         if self.is_fetching_realtime:
             logger.warning("Realtime data fetch already in progress, skipping...")
             return False
@@ -459,43 +512,35 @@ class StockDataManager:
         self.is_fetching_realtime = True
         
         try:
-            # Run blocking fetch in thread pool
             loop = asyncio.get_event_loop()
             df = await loop.run_in_executor(self._executor, self._fetch_realtime_data_blocking)
             
             if df is None:
                 return False
             
-            # Update in-memory data with lock (this is fast, no blocking IO)
+            # 1. Atomic write of the full market snapshot (for status/monitoring)
+            market_snap_path = self.cache_dir / "market_snap" / "latest_spot.csv"
+            self.atomic_write_csv(df, market_snap_path)
+            
+            # 2. Batch write all records to SQLite in ONE transaction
+            # Mapping akshare columns to our DB columns
+            # '代码', '最新价', '成交量', '成交额', '最高', '最低', '今开', '时间'
+            db_data = df[['代码', '最新价', '成交量', '成交额', '最高', '最低', '今开', '时间']].copy()
+            db_data.columns = ['code', 'price', 'volume', 'amount', 'high', 'low', 'open', 'timestamp']
+            
+            # Perform batch insert
+            conn = self._get_db_conn()
+            try:
+                db_data.to_sql('realtime_ticks', conn, if_exists='append', index=False)
+                conn.commit()
+            finally:
+                conn.close()
+            
+            # 3. Update memory metadata
             with self.kline_realtime_lock:
-                # Save full market snapshot to shared cache
-                market_snap_path = self.cache_dir / "market_snap" / "latest_spot.csv"
-                self.atomic_write_csv(df, market_snap_path)
-                
-                # Split by stock code and append to existing data
-                for _, row in df.iterrows():
-                    stock_code = row['代码']
-                    
-                    # Convert row to DataFrame
-                    row_df = pd.DataFrame([row])
-                    
-                    if stock_code in self.kline_realtime:
-                        # Append to existing data
-                        self.kline_realtime[stock_code] = pd.concat(
-                            [self.kline_realtime[stock_code], row_df],
-                            ignore_index=True
-                        )
-                    else:
-                        # Create new entry
-                        self.kline_realtime[stock_code] = row_df
-                    
-                    # Save individual stock realtime data to shared cache
-                    stock_realtime_path = self.cache_dir / "realtime" / f"{stock_code}.csv"
-                    self.atomic_write_csv(self.kline_realtime[stock_code], stock_realtime_path)
-                
                 self.kline_realtime_last_updated = datetime.now()
             
-            logger.info(f"Realtime data fetched and split for {len(df)} stocks")
+            logger.info(f"Realtime data for {len(df)} stocks saved to SQLite.")
             return True
             
         except Exception as e:
@@ -503,34 +548,77 @@ class StockDataManager:
             return False
         finally:
             self.is_fetching_realtime = False
-    
+
+    def get_realtime_kline_from_db(self, stock_code: str) -> Optional[pd.DataFrame]:
+        """Get today's realtime tick data for a stock from SQLite"""
+        try:
+            conn = self._get_db_conn()
+            # Ensure code is string for query
+            query = "SELECT * FROM realtime_ticks WHERE code = ? ORDER BY timestamp ASC"
+            df = pd.read_sql_query(query, conn, params=(stock_code,))
+            conn.close()
+            
+            if df.empty:
+                return None
+            
+            # Map back to Chinese column names for consistency with existing CSV/API format
+            df.columns = ['代码', '最新价', '成交量', '成交额', '最高', '最低', '今开', '时间']
+            return df
+        except Exception as e:
+            logger.error(f"Error reading realtime data from DB for {stock_code}: {e}")
+            return None
+
     def get_realtime_kline(self, stock_code: str) -> Optional[pd.DataFrame]:
-        """Get realtime K-line for a stock"""
+        """Get realtime K-line for a stock (tries DB first)"""
+        # First try to get from the new SQLite cache
+        df = self.get_realtime_kline_from_db(stock_code)
+        if df is not None:
+            return df
+            
+        # Fallback to in-memory (for data loaded at startup from legacy CSVs)
         with self.kline_realtime_lock:
             df = self.kline_realtime.get(stock_code)
             return df.copy() if df is not None else None
     
     def save_realtime_data_to_file(self):
-        """Save today's realtime data to files (call after market close)"""
-        with self.kline_realtime_lock:
-            try:
-                realtime_dir = self.data_dir / "kline_realtime"
-                
-                for stock_code, df in self.kline_realtime.items():
+        """Save today's realtime data from SQLite to files (call after market close)"""
+        try:
+            realtime_dir = self.data_dir / "kline_realtime"
+            realtime_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Get all unique codes from DB
+            conn = self._get_db_conn()
+            codes_df = pd.read_sql_query("SELECT DISTINCT code FROM realtime_ticks", conn)
+            
+            for stock_code in codes_df['code']:
+                df = self.get_realtime_kline_from_db(stock_code)
+                if df is not None:
                     file_path = realtime_dir / f"{stock_code}.csv"
                     df.to_csv(file_path, index=False, encoding='utf-8-sig')
-                
-                logger.info(f"Saved realtime data for {len(self.kline_realtime)} stocks")
-                return True
-            except Exception as e:
-                logger.error(f"Error saving realtime data: {e}")
-                return False
+            
+            conn.close()
+            logger.info(f"Saved realtime data from SQLite to files for {len(codes_df)} stocks")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving realtime data from DB: {e}")
+            return False
     
     def clear_realtime_data(self):
         """Clear realtime data (call at market open for new trading day)"""
         with self.kline_realtime_lock:
             self.kline_realtime.clear()
             self.kline_realtime_last_updated = None
+            
+            # Also clear SQLite table
+            try:
+                conn = self._get_db_conn()
+                conn.execute("DELETE FROM realtime_ticks")
+                conn.commit()
+                conn.close()
+                logger.info("Cleared SQLite realtime_ticks table")
+            except Exception as e:
+                logger.error(f"Error clearing SQLite table: {e}")
+                
             logger.info("Cleared realtime data for new trading day")
     
     # ==================== Fund Flow Management ====================
