@@ -2,6 +2,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime, time, date
 import logging
+import asyncio
 
 from app.services.fetcher import fetch_market_data, fetch_sse_summary, fetch_realtime_stock_data, get_watched_stocks
 from app.services.trading_calendar import get_trading_calendar_service
@@ -45,7 +46,8 @@ async def tick():
     Checks if it's trading time before fetching.
     """
     if is_trading_time():
-        fetch_market_data()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, fetch_market_data)
     else:
         # logger.debug("Not trading time, skipping fetch.")
         pass
@@ -55,7 +57,8 @@ async def tick_sse_summary():
     Scheduled job to fetch SSE summary data periodically.
     This runs regardless of trading time.
     """
-    fetch_sse_summary()
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, fetch_sse_summary)
 
 async def tick_realtime_stocks():
     """
@@ -65,7 +68,8 @@ async def tick_realtime_stocks():
     if is_trading_time():
         watched = get_watched_stocks()
         if watched:
-            fetch_realtime_stock_data(watched)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, fetch_realtime_stock_data, watched)
     else:
         # logger.debug("Not trading time, skipping realtime stock fetch.")
         pass
@@ -75,7 +79,7 @@ async def tick_stock_list():
     Fetch stock list (runs weekly on Monday at 9:00)
     """
     manager = get_stock_data_manager()
-    manager.fetch_stock_list()
+    await manager.fetch_stock_list()
     logger.info("Stock list updated via scheduler")
 
 async def tick_realtime_market_data():
@@ -125,7 +129,8 @@ async def tick_market_close_backup():
         manager = get_stock_data_manager()
         
         # Save realtime data to files
-        manager.save_realtime_data_to_file()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, manager.save_realtime_data_to_file)
         
         logger.info("Market close backup completed")
     else:

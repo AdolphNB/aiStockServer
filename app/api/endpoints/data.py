@@ -107,7 +107,7 @@ async def get_historical_kline(
         if df is None:
             # Try fetching if not in cache
             logger.info(f"Daily K-line for {symbol} not in cache, fetching...")
-            if manager.fetch_daily_kline(symbol):
+            if await manager.fetch_daily_kline(symbol):
                 df = manager.get_daily_kline(symbol, include_today=include_today)
         
         return dataframe_to_json_response(df, f"Historical K-line data for {symbol}")
@@ -259,7 +259,7 @@ async def trigger_fetch_stock_list():
     """
     try:
         manager = get_stock_data_manager()
-        success = manager.fetch_stock_list()
+        success = await manager.fetch_stock_list()
         
         return {
             "code": 200 if success else 500,

@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     manager = get_stock_data_manager()
     
     # Load stock list
-    manager.load_stock_list()
+    await manager.load_stock_list()
     
     # Load daily K-lines
     manager.load_daily_klines(days=settings.KLINE_DAYS)
@@ -37,7 +37,10 @@ async def lifespan(app: FastAPI):
     if manager.load_realtime_data() == 0:
         logger.info("No local realtime data found, fetching from source...")
         if await manager.fetch_realtime_data():
-            manager.save_realtime_data_to_file()
+            # Offload saving to file to avoid blocking
+            import asyncio
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, manager.save_realtime_data_to_file)
             logger.info("Realtime data fetched and saved to local cache")
     
     # 2. Fund Flow Data
@@ -51,7 +54,9 @@ async def lifespan(app: FastAPI):
         await manager.fetch_stock_changes()
     
     # Fetch SSE summary data immediately on startup
-    fetch_sse_summary()
+    import asyncio
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, fetch_sse_summary)
     
     # Start scheduler
     start_scheduler()

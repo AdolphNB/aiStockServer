@@ -72,15 +72,17 @@ class StockDataManager:
     
     # ==================== Stock List Management ====================
     
-    def load_stock_list(self) -> bool:
-        """Load stock list from file or fetch from akshare"""
-        with self.stock_list_lock:
+    async def load_stock_list(self) -> bool:
+        """Load stock list from file or fetch from akshare (async version)"""
+        # Try loading from file first
+        file_path = self.data_dir / "stock_list" / "stock_info_a_code_name.csv"
+        if file_path.exists():
             try:
-                # Try loading from file first
-                file_path = self.data_dir / "stock_list" / "stock_info_a_code_name.csv"
-                if file_path.exists():
-                    self.stock_list = pd.read_csv(file_path)
-                    
+                # Reading CSV is relatively fast, but could be offloaded if it becomes very large
+                df = pd.read_csv(file_path)
+                
+                with self.stock_list_lock:
+                    self.stock_list = df
                     # Ensure stock code column is formatted as 6-digit string
                     if 'code' in self.stock_list.columns:
                         self.stock_list['code'] = self.stock_list['code'].apply(
@@ -90,26 +92,40 @@ class StockDataManager:
                     self.stock_list_last_updated = datetime.fromtimestamp(file_path.stat().st_mtime)
                     logger.info(f"Loaded stock list from file: {len(self.stock_list)} stocks")
                     return True
-                else:
-                    # Fetch from akshare if file doesn't exist
-                    return self.fetch_stock_list()
             except Exception as e:
-                logger.error(f"Error loading stock list: {e}")
-                return False
+                logger.error(f"Error loading stock list from file: {e}")
+                # Fall through to fetch if loading fails
+        
+        # Fetch from akshare if file doesn't exist or loading failed
+        return await self.fetch_stock_list()
     
-    def fetch_stock_list(self) -> bool:
-        """Fetch stock list from akshare"""
-        with self.stock_list_lock:
-            try:
-                logger.info("Fetching stock list from akshare...")
-                self.stock_list = ak.stock_info_a_code_name()
+    def _fetch_stock_list_blocking(self) -> Optional[pd.DataFrame]:
+        """Blocking function to fetch stock list from akshare"""
+        try:
+            logger.info("Fetching stock list from akshare...")
+            df = ak.stock_info_a_code_name()
+            
+            # Ensure stock code column is formatted as 6-digit string
+            if 'code' in df.columns:
+                df['code'] = df['code'].apply(
+                    lambda x: f"{int(x):06d}" if pd.notna(x) else x
+                )
+            return df
+        except Exception as e:
+            logger.error(f"Error fetching stock list: {e}")
+            return None
+
+    async def fetch_stock_list(self) -> bool:
+        """Fetch stock list from akshare (async version)"""
+        try:
+            loop = asyncio.get_event_loop()
+            df = await loop.run_in_executor(self._executor, self._fetch_stock_list_blocking)
+            
+            if df is None:
+                return False
                 
-                # Ensure stock code column is formatted as 6-digit string
-                if 'code' in self.stock_list.columns:
-                    self.stock_list['code'] = self.stock_list['code'].apply(
-                        lambda x: f"{int(x):06d}" if pd.notna(x) else x
-                    )
-                
+            with self.stock_list_lock:
+                self.stock_list = df
                 self.stock_list_last_updated = datetime.now()
                 
                 # Save to file
@@ -118,9 +134,9 @@ class StockDataManager:
                 
                 logger.info(f"Stock list fetched and saved: {len(self.stock_list)} stocks")
                 return True
-            except Exception as e:
-                logger.error(f"Error fetching stock list: {e}")
-                return False
+        except Exception as e:
+            logger.error(f"Error in async fetch stock list: {e}")
+            return False
     
     def get_stock_list(self) -> Optional[pd.DataFrame]:
         """Get stock list"""
@@ -170,38 +186,49 @@ class StockDataManager:
             logger.info(f"Loaded daily K-lines for {loaded_count} stocks (excluding today's data)")
             return loaded_count
     
-    def fetch_daily_kline(self, stock_code: str, days: int = 90, adjust: str = "qfq") -> bool:
-        """Fetch daily K-line for a single stock"""
+    def _fetch_daily_kline_blocking(self, stock_code: str, days: int, adjust: str) -> Optional[pd.DataFrame]:
+        """Blocking function to fetch daily K-line from akshare"""
         try:
             logger.info(f"Fetching daily K-line for {stock_code}...")
-            
             df = ak.stock_zh_a_hist(
                 symbol=stock_code,
                 period="daily",
                 adjust=adjust
             )
+            return df
+        except Exception as e:
+            logger.error(f"Error fetching daily K-line for {stock_code}: {e}")
+            return None
+
+    async def fetch_daily_kline(self, stock_code: str, days: int = 90, adjust: str = "qfq") -> bool:
+        """Fetch daily K-line for a single stock (async version)"""
+        try:
+            loop = asyncio.get_event_loop()
+            df = await loop.run_in_executor(
+                self._executor, 
+                self._fetch_daily_kline_blocking, 
+                stock_code, 
+                days, 
+                adjust
+            )
+            
+            if df is None or df.empty:
+                return False
             
             # Keep only the last N days
             if len(df) > days:
                 df = df.tail(days)
             
-            # Remove today's data if present (today's data will be calculated from realtime data)
+            # Remove today's data if present
             if '日期' in df.columns:
                 today_str = date.today().strftime('%Y-%m-%d')
                 df['日期'] = df['日期'].astype(str)
-                
-                before_count = len(df)
                 df = df[df['日期'] != today_str].copy()
-                after_count = len(df)
-                
-                if before_count != after_count:
-                    logger.info(f"Removed {before_count - after_count} record(s) for today ({today_str}) from historical data for {stock_code}")
             
             # Ensure stock code column is formatted as 6-digit string
             if '股票代码' in df.columns:
                 df['股票代码'] = df['股票代码'].apply(lambda x: f"{int(x):06d}" if pd.notna(x) else stock_code)
             else:
-                # Add stock code column if it doesn't exist
                 df.insert(1, '股票代码', stock_code)
             
             with self.kline_daily_lock:
@@ -215,7 +242,7 @@ class StockDataManager:
             logger.info(f"Daily K-line fetched for {stock_code}: {len(df)} records (excluding today)")
             return True
         except Exception as e:
-            logger.error(f"Error fetching daily K-line for {stock_code}: {e}")
+            logger.error(f"Error in async fetch daily K-line for {stock_code}: {e}")
             return False
     
     def get_daily_kline(self, stock_code: str, include_today: bool = True) -> Optional[pd.DataFrame]:
