@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from typing import Optional
 import os
 from pathlib import Path
+from datetime import datetime
 import logging
 
 from app.core.config import settings
@@ -143,7 +144,35 @@ async def get_stock_list():
 
 @router.get("/data/status")
 async def get_data_status():
-    # ... existing code ...
+    """
+    Get system data status.
+    """
+    try:
+        # For status, we still need some info. 
+        # We can check file timestamps.
+        status = {
+            "cache_dir": str(CACHE_DIR),
+            "files": {}
+        }
+        
+        for folder in ["realtime", "market_snap", "fund_flow", "stock_changes", "stock_list", "kline_daily"]:
+            folder_path = CACHE_DIR / folder
+            if folder_path.exists():
+                files = list(folder_path.glob("*.csv"))
+                status["files"][folder] = {
+                    "count": len(files),
+                    "last_modified": datetime.fromtimestamp(max(f.stat().st_mtime for f in files)).isoformat() if files else None
+                }
+        
+        return {
+            "code": 200,
+            "message": "System cache status",
+            "data": status
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting system status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/data/market-activity")
 async def get_market_activity():

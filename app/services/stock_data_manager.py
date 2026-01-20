@@ -7,6 +7,7 @@ import pandas as pd
 import logging
 import threading
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
 from pathlib import Path

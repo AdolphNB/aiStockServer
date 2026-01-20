@@ -70,25 +70,30 @@ def read_root():
 @app.get("/health")
 def health_check():
     """Health check endpoint with data status"""
-    from app.services.fetcher import get_latest_market_data
     from app.services.trading_calendar import get_trading_calendar_service
-    from datetime import date
+    from datetime import date, datetime
+    from pathlib import Path
     
-    data = get_latest_market_data()
     trading_calendar = get_trading_calendar_service()
-    manager = get_stock_data_manager()
-    stock_data_status = manager.get_status()
+    cache_dir = Path(settings.SHARED_CACHE_DIR)
+    
+    # Check cache status by looking at files
+    cache_status = {}
+    if cache_dir.exists():
+        for folder in ["realtime", "market_snap", "fund_flow", "stock_changes", "stock_list", "kline_daily"]:
+            folder_path = cache_dir / folder
+            if folder_path.exists():
+                files = list(folder_path.glob("*.csv"))
+                cache_status[folder] = {
+                    "count": len(files),
+                    "last_modified": datetime.fromtimestamp(max(f.stat().st_mtime for f in files)).isoformat() if files else None
+                }
     
     return {
         "status": "running",
         "port": settings.PORT,
-        "has_market_activity": data.get("market_activity") is not None,
-        "market_activity_last_updated": data.get("last_updated"),
-        "has_sse_summary": data.get("sse_summary") is not None,
-        "sse_summary_last_updated": data.get("sse_summary_last_updated"),
         "is_trading_day": trading_calendar.is_trading_day(date.today()),
-        "trading_calendar_cache": trading_calendar.get_cache_info(),
-        "stock_data": stock_data_status
+        "cache_status": cache_status
     }
 
 @app.get("/sse-summary")
