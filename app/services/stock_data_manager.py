@@ -141,6 +141,7 @@ class StockDataManager:
         with self.kline_daily_lock:
             loaded_count = 0
             kline_dir = self.data_dir / "kline_daily"
+            today_str = date.today().strftime('%Y-%m-%d')
             
             for csv_file in kline_dir.glob("*.csv"):
                 try:
@@ -150,6 +151,11 @@ class StockDataManager:
                     # Keep only the last N days
                     if len(df) > days:
                         df = df.tail(days)
+                    
+                    # Remove today's data if present (today's data will be calculated from realtime data)
+                    if '日期' in df.columns:
+                        df['日期'] = df['日期'].astype(str)
+                        df = df[df['日期'] != today_str].copy()
                     
                     # Ensure stock code column is formatted as 6-digit string
                     if '股票代码' in df.columns:
@@ -161,7 +167,7 @@ class StockDataManager:
                 except Exception as e:
                     logger.error(f"Error loading daily K-line for {csv_file.stem}: {e}")
             
-            logger.info(f"Loaded daily K-lines for {loaded_count} stocks")
+            logger.info(f"Loaded daily K-lines for {loaded_count} stocks (excluding today's data)")
             return loaded_count
     
     def fetch_daily_kline(self, stock_code: str, days: int = 90, adjust: str = "qfq") -> bool:
@@ -179,6 +185,18 @@ class StockDataManager:
             if len(df) > days:
                 df = df.tail(days)
             
+            # Remove today's data if present (today's data will be calculated from realtime data)
+            if '日期' in df.columns:
+                today_str = date.today().strftime('%Y-%m-%d')
+                df['日期'] = df['日期'].astype(str)
+                
+                before_count = len(df)
+                df = df[df['日期'] != today_str].copy()
+                after_count = len(df)
+                
+                if before_count != after_count:
+                    logger.info(f"Removed {before_count - after_count} record(s) for today ({today_str}) from historical data for {stock_code}")
+            
             # Ensure stock code column is formatted as 6-digit string
             if '股票代码' in df.columns:
                 df['股票代码'] = df['股票代码'].apply(lambda x: f"{int(x):06d}" if pd.notna(x) else stock_code)
@@ -194,7 +212,7 @@ class StockDataManager:
             file_path = self.data_dir / "kline_daily" / f"{stock_code}.csv"
             df.to_csv(file_path, index=False, encoding='utf-8-sig')
             
-            logger.info(f"Daily K-line fetched for {stock_code}: {len(df)} records")
+            logger.info(f"Daily K-line fetched for {stock_code}: {len(df)} records (excluding today)")
             return True
         except Exception as e:
             logger.error(f"Error fetching daily K-line for {stock_code}: {e}")
@@ -217,11 +235,20 @@ class StockDataManager:
                     
                     # Check if today's date already exists in historical data
                     if '日期' in result.columns:
-                        # Remove existing today's data if present
-                        result = result[result['日期'] != today_str]
+                        # Ensure date column is string type for comparison
+                        result['日期'] = result['日期'].astype(str)
+                        
+                        # Count how many records have today's date
+                        today_count = (result['日期'] == today_str).sum()
+                        
+                        if today_count > 0:
+                            logger.info(f"Removing {today_count} existing record(s) for {today_str} from {stock_code}")
+                            # Remove all existing today's data
+                            result = result[result['日期'] != today_str].copy()
                     
-                    # Append today's data
+                    # Append today's calculated data
                     result = pd.concat([result, today_kline], ignore_index=True)
+                    logger.debug(f"Appended today's K-line for {stock_code}, total records: {len(result)}")
             
             return result
     
