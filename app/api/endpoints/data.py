@@ -284,7 +284,7 @@ async def trigger_fetch_realtime():
     """
     try:
         manager = get_stock_data_manager()
-        success = manager.fetch_realtime_data()
+        success = await manager.fetch_realtime_data()
         
         return {
             "code": 200 if success else 500,
@@ -309,7 +309,7 @@ async def trigger_fetch_fund_flow():
     """
     try:
         manager = get_stock_data_manager()
-        success = manager.fetch_fund_flow()
+        success = await manager.fetch_fund_flow()
         
         return {
             "code": 200 if success else 500,
@@ -334,7 +334,7 @@ async def trigger_fetch_stock_changes():
     """
     try:
         manager = get_stock_data_manager()
-        success = manager.fetch_stock_changes()
+        success = await manager.fetch_stock_changes()
         
         return {
             "code": 200 if success else 500,

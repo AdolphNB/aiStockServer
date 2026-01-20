@@ -36,19 +36,19 @@ async def lifespan(app: FastAPI):
     # 1. Realtime K-line Data
     if manager.load_realtime_data() == 0:
         logger.info("No local realtime data found, fetching from source...")
-        if manager.fetch_realtime_data():
+        if await manager.fetch_realtime_data():
             manager.save_realtime_data_to_file()
             logger.info("Realtime data fetched and saved to local cache")
     
     # 2. Fund Flow Data
     if not manager.load_fund_flow():
         logger.info("No local fund flow data found, fetching from source...")
-        manager.fetch_fund_flow()
+        await manager.fetch_fund_flow()
         
     # 3. Stock Changes Data
     if not manager.load_stock_changes():
         logger.info("No local stock changes data found, fetching from source...")
-        manager.fetch_stock_changes()
+        await manager.fetch_stock_changes()
     
     # Fetch SSE summary data immediately on startup
     fetch_sse_summary()
@@ -62,6 +62,7 @@ async def lifespan(app: FastAPI):
     # Cleanup on shutdown
     logger.info("Application shutting down...")
     stop_scheduler()
+    manager.shutdown()
     logger.info("Scheduler stopped, application shutdown complete.")
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)

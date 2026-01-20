@@ -6,6 +6,8 @@ import akshare as ak
 import pandas as pd
 import logging
 import threading
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
 from pathlib import Path
 from typing import Dict, Optional, List
@@ -47,6 +49,11 @@ class StockDataManager:
         
         # Flag to prevent concurrent fetching
         self.is_fetching_realtime = False
+        self.is_fetching_fund_flow = False
+        self.is_fetching_stock_changes = False
+        
+        # Thread pool for blocking IO operations
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="stock_data_fetch")
         
         logger.info(f"StockDataManager initialized with data directory: {self.data_dir}")
     
@@ -240,10 +247,32 @@ class StockDataManager:
                 logger.info(f"Loaded realtime data for {loaded_count} stocks")
             return loaded_count
 
-    def fetch_realtime_data(self) -> bool:
+    def _fetch_realtime_data_blocking(self) -> Optional[pd.DataFrame]:
         """
-        Fetch realtime data for all stocks and split by stock code.
+        Blocking function to fetch realtime data from akshare.
+        This runs in a thread pool to avoid blocking the event loop.
+        """
+        try:
+            logger.info("Fetching realtime market data...")
+            df = ak.stock_zh_a_spot_em()
+            
+            if df is None or len(df) == 0:
+                logger.warning("No realtime data fetched")
+                return None
+            
+            # Add timestamp
+            df['时间'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error fetching realtime data: {e}")
+            return None
+    
+    async def fetch_realtime_data(self) -> bool:
+        """
+        Fetch realtime data for all stocks and split by stock code (async version).
         This should be called every 1 minute during trading hours.
+        Runs the blocking fetch operation in a thread pool.
         """
         # Prevent concurrent fetching
         if self.is_fetching_realtime:
@@ -253,18 +282,14 @@ class StockDataManager:
         self.is_fetching_realtime = True
         
         try:
-            logger.info("Fetching realtime market data...")
+            # Run blocking fetch in thread pool
+            loop = asyncio.get_event_loop()
+            df = await loop.run_in_executor(self._executor, self._fetch_realtime_data_blocking)
             
-            # Fetch all market data
-            df = ak.stock_zh_a_spot_em()
-            
-            if df is None or len(df) == 0:
-                logger.warning("No realtime data fetched")
+            if df is None:
                 return False
             
-            # Add timestamp
-            df['时间'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
+            # Update in-memory data with lock (this is fast, no blocking IO)
             with self.kline_realtime_lock:
                 # Split by stock code and append to existing data
                 for _, row in df.iterrows():
@@ -289,7 +314,7 @@ class StockDataManager:
             return True
             
         except Exception as e:
-            logger.error(f"Error fetching realtime data: {e}")
+            logger.error(f"Error in async fetch realtime data: {e}")
             return False
         finally:
             self.is_fetching_realtime = False
@@ -340,27 +365,53 @@ class StockDataManager:
                 logger.error(f"Error loading fund flow data: {e}")
                 return False
 
-    def fetch_fund_flow(self) -> bool:
-        """Fetch fund flow data and overwrite existing data"""
-        with self.fund_flow_lock:
-            try:
-                logger.info("Fetching fund flow data...")
-                
-                self.fund_flow = ak.stock_fund_flow_individual(symbol="即时")
-                if self.fund_flow is not None and not self.fund_flow.empty:
-                    logger.info(f"Fund flow columns: {self.fund_flow.columns.tolist()}")
-                
+    def _fetch_fund_flow_blocking(self) -> Optional[pd.DataFrame]:
+        """
+        Blocking function to fetch fund flow data from akshare.
+        This runs in a thread pool to avoid blocking the event loop.
+        """
+        try:
+            logger.info("Fetching fund flow data...")
+            df = ak.stock_fund_flow_individual(symbol="即时")
+            if df is not None and not df.empty:
+                logger.info(f"Fund flow columns: {df.columns.tolist()}")
+            return df
+        except Exception as e:
+            logger.error(f"Error fetching fund flow data: {e}")
+            return None
+    
+    async def fetch_fund_flow(self) -> bool:
+        """Fetch fund flow data and overwrite existing data (async version)"""
+        # Prevent concurrent fetching
+        if self.is_fetching_fund_flow:
+            logger.warning("Fund flow data fetch already in progress, skipping...")
+            return False
+        
+        self.is_fetching_fund_flow = True
+        
+        try:
+            # Run blocking fetch in thread pool
+            loop = asyncio.get_event_loop()
+            df = await loop.run_in_executor(self._executor, self._fetch_fund_flow_blocking)
+            
+            if df is None or df.empty:
+                return False
+            
+            with self.fund_flow_lock:
+                self.fund_flow = df
                 self.fund_flow_last_updated = datetime.now()
                 
                 # Save to file
                 file_path = self.data_dir / "fund_flow" / "fund_flow_latest.csv"
                 self.fund_flow.to_csv(file_path, index=False, encoding='utf-8-sig')
-                
-                logger.info(f"Fund flow data fetched: {len(self.fund_flow)} records")
-                return True
-            except Exception as e:
-                logger.error(f"Error fetching fund flow data: {e}")
-                return False
+            
+            logger.info(f"Fund flow data fetched: {len(self.fund_flow)} records")
+            return True
+        except Exception as e:
+            logger.error(f"Error in async fetch fund flow data: {e}")
+            return False
+        finally:
+            self.is_fetching_fund_flow = False
     
     def get_fund_flow(self, stock_code: Optional[str] = None) -> Optional[pd.DataFrame]:
         """Get fund flow data, optionally filtered by stock code"""
@@ -430,45 +481,72 @@ class StockDataManager:
                 logger.error(f"Error loading stock changes data: {e}")
                 return False
 
-    def fetch_stock_changes(self) -> bool:
-        """Fetch stock changes data for all change types and overwrite existing data"""
-        with self.stock_changes_lock:
-            try:
-                logger.info("Fetching stock changes data...")
+    def _fetch_stock_changes_blocking(self) -> Optional[pd.DataFrame]:
+        """
+        Blocking function to fetch stock changes data from akshare.
+        This runs in a thread pool to avoid blocking the event loop.
+        """
+        try:
+            logger.info("Fetching stock changes data...")
+            
+            # List of all change types
+            change_types = [
+                '火箭发射', '快速反弹', '大笔买入', '打开跌停板', '有大买盘',
+                '加速下跌', '高台跳水', '大笔卖出', '打开涨停板', '有大卖盘'
+            ]
+            
+            all_changes = []
+            for change_type in change_types:
+                try:
+                    df = ak.stock_changes_em(symbol=change_type)
+                    if df is not None and len(df) > 0:
+                        all_changes.append(df)
+                except Exception as e:
+                    logger.warning(f"Error fetching {change_type}: {e}")
+                    continue
+            
+            if all_changes:
+                return pd.concat(all_changes, ignore_index=True)
+            else:
+                logger.warning("No stock changes data fetched")
+                return None
                 
-                # List of all change types
-                change_types = [
-                    '火箭发射', '快速反弹', '大笔买入', '打开跌停板', '有大买盘',
-                    '加速下跌', '高台跳水', '大笔卖出', '打开涨停板', '有大卖盘'
-                ]
-                
-                all_changes = []
-                for change_type in change_types:
-                    try:
-                        df = ak.stock_changes_em(symbol=change_type)
-                        if df is not None and len(df) > 0:
-                            all_changes.append(df)
-                    except Exception as e:
-                        logger.warning(f"Error fetching {change_type}: {e}")
-                        continue
-                
-                if all_changes:
-                    self.stock_changes = pd.concat(all_changes, ignore_index=True)
-                    self.stock_changes_last_updated = datetime.now()
-                    
-                    # Save to file
-                    file_path = self.data_dir / "stock_changes" / "stock_changes_latest.csv"
-                    self.stock_changes.to_csv(file_path, index=False, encoding='utf-8-sig')
-                    
-                    logger.info(f"Stock changes data fetched: {len(self.stock_changes)} records")
-                    return True
-                else:
-                    logger.warning("No stock changes data fetched")
-                    return False
-                    
-            except Exception as e:
-                logger.error(f"Error fetching stock changes data: {e}")
+        except Exception as e:
+            logger.error(f"Error fetching stock changes data: {e}")
+            return None
+    
+    async def fetch_stock_changes(self) -> bool:
+        """Fetch stock changes data for all change types and overwrite existing data (async version)"""
+        # Prevent concurrent fetching
+        if self.is_fetching_stock_changes:
+            logger.warning("Stock changes data fetch already in progress, skipping...")
+            return False
+        
+        self.is_fetching_stock_changes = True
+        
+        try:
+            # Run blocking fetch in thread pool
+            loop = asyncio.get_event_loop()
+            df = await loop.run_in_executor(self._executor, self._fetch_stock_changes_blocking)
+            
+            if df is None or df.empty:
                 return False
+            
+            with self.stock_changes_lock:
+                self.stock_changes = df
+                self.stock_changes_last_updated = datetime.now()
+                
+                # Save to file
+                file_path = self.data_dir / "stock_changes" / "stock_changes_latest.csv"
+                self.stock_changes.to_csv(file_path, index=False, encoding='utf-8-sig')
+            
+            logger.info(f"Stock changes data fetched: {len(self.stock_changes)} records")
+            return True
+        except Exception as e:
+            logger.error(f"Error in async fetch stock changes data: {e}")
+            return False
+        finally:
+            self.is_fetching_stock_changes = False
     
     def get_stock_changes(self, stock_code: Optional[str] = None) -> Optional[pd.DataFrame]:
         """Get stock changes data, optionally filtered by stock code"""
@@ -530,17 +608,26 @@ class StockDataManager:
             },
             "kline_realtime": {
                 "count": len(self.kline_realtime),
-                "last_updated": self.kline_realtime_last_updated.isoformat() if self.kline_realtime_last_updated else None
+                "last_updated": self.kline_realtime_last_updated.isoformat() if self.kline_realtime_last_updated else None,
+                "is_fetching": self.is_fetching_realtime
             },
             "fund_flow": {
                 "count": len(self.fund_flow) if self.fund_flow is not None else 0,
-                "last_updated": self.fund_flow_last_updated.isoformat() if self.fund_flow_last_updated else None
+                "last_updated": self.fund_flow_last_updated.isoformat() if self.fund_flow_last_updated else None,
+                "is_fetching": self.is_fetching_fund_flow
             },
             "stock_changes": {
                 "count": len(self.stock_changes) if self.stock_changes is not None else 0,
-                "last_updated": self.stock_changes_last_updated.isoformat() if self.stock_changes_last_updated else None
+                "last_updated": self.stock_changes_last_updated.isoformat() if self.stock_changes_last_updated else None,
+                "is_fetching": self.is_fetching_stock_changes
             }
         }
+    
+    def shutdown(self):
+        """Shutdown the manager and cleanup resources"""
+        logger.info("Shutting down StockDataManager...")
+        self._executor.shutdown(wait=True, cancel_futures=False)
+        logger.info("Thread pool executor shutdown complete")
 
 
 # Global singleton instance

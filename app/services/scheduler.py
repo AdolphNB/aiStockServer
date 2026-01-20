@@ -85,7 +85,7 @@ async def tick_realtime_market_data():
     """
     if is_trading_time():
         manager = get_stock_data_manager()
-        success = manager.fetch_realtime_data()
+        success = await manager.fetch_realtime_data()
         if success:
             logger.info("Realtime market data fetched and split successfully")
     else:
@@ -98,7 +98,7 @@ async def tick_fund_flow():
     """
     if is_trading_time():
         manager = get_stock_data_manager()
-        success = manager.fetch_fund_flow()
+        success = await manager.fetch_fund_flow()
         if success:
             logger.info("Fund flow data fetched successfully")
     else:
@@ -111,7 +111,7 @@ async def tick_stock_changes():
     """
     if is_trading_time():
         manager = get_stock_data_manager()
-        success = manager.fetch_stock_changes()
+        success = await manager.fetch_stock_changes()
         if success:
             logger.info("Stock changes data fetched successfully")
     else:
