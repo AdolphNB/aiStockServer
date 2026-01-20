@@ -3,84 +3,19 @@ Stock Data API Endpoints
 Provides REST API for stock data access
 """
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 from typing import Optional
-import pandas as pd
-import numpy as np
+import os
+from pathlib import Path
 import logging
 
+from app.core.config import settings
 from app.services.stock_data_manager import get_stock_data_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-
-def dataframe_to_json_response(df: Optional[pd.DataFrame], message: str = "success"):
-    """Convert DataFrame to JSON response format"""
-    if df is None or len(df) == 0:
-        return {
-            "code": 404,
-            "message": "No data found",
-            "data": None
-        }
-    
-    # Create a copy to avoid modifying the original
-    df_clean = df.copy()
-    
-    # Convert to object type to allow replacing primitives with None
-    df_clean = df_clean.astype(object)
-    
-    # Replace NaN, inf, and -inf with None for JSON compliance
-    df_clean = df_clean.replace([float('inf'), float('-inf'), np.inf, -np.inf], None)
-    df_clean = df_clean.where(pd.notna(df_clean), None)
-    
-    # Convert DataFrame to dict using 'split' orientation
-    # This gives us {index, columns, data} format
-    # Using date_format='iso' to handle datetime types
-    df_dict = df_clean.to_dict(orient='split')
-    
-    # Ensure index is JSON serializable (convert any remaining special types)
-    index_list = []
-    for idx in df_dict['index']:
-        if isinstance(idx, (int, float, str, bool)) or idx is None:
-            index_list.append(idx)
-        else:
-            # Convert any other type (like numpy types) to Python native
-            try:
-                index_list.append(int(idx))
-            except (ValueError, TypeError):
-                index_list.append(str(idx))
-    
-    # Ensure data values are JSON serializable
-    data_list = []
-    for row in df_dict['data']:
-        row_list = []
-        for val in row:
-            if val is None:
-                row_list.append(None)
-            elif isinstance(val, (int, float, str, bool)):
-                row_list.append(val)
-            else:
-                # Convert numpy/pandas types to Python native types
-                try:
-                    # Try numeric conversion first
-                    if hasattr(val, 'item'):  # numpy scalar
-                        row_list.append(val.item())
-                    else:
-                        row_list.append(str(val))
-                except (ValueError, TypeError, AttributeError):
-                    row_list.append(str(val))
-        data_list.append(row_list)
-    
-    return {
-        "code": 200,
-        "message": message,
-        "data": {
-            "columns": df_dict['columns'],
-            "index": index_list,
-            "data": data_list
-        }
-    }
-
+CACHE_DIR = Path(settings.SHARED_CACHE_DIR)
 
 @router.get("/data/kline")
 async def get_historical_kline(
@@ -89,28 +24,29 @@ async def get_historical_kline(
 ):
     """
     Get historical daily K-line data for a stock.
-    Returns last 90 trading days + today's K-line (if include_today=True).
-    
-    **Parameters:**
-    - symbol: Stock code (e.g., "000001")
-    - include_today: Whether to include today's K-line (default: True)
-    
-    **Returns:**
-    DataFrame format with columns: 日期, 开盘, 收盘, 最高, 最低, 成交量, etc.
+    Returns CSV file containing last 90 trading days + today's K-line.
     """
     try:
-        manager = get_stock_data_manager()
+        # File path in shared cache
+        file_path = CACHE_DIR / "kline_daily" / f"full_{symbol}.csv"
         
-        # Get daily K-line data
-        df = manager.get_daily_kline(symbol, include_today=include_today)
-        
-        if df is None:
-            # Try fetching if not in cache
-            logger.info(f"Daily K-line for {symbol} not in cache, fetching...")
+        # If file doesn't exist, we might need to trigger a fetch or check historical
+        if not file_path.exists():
+            # Fallback to historical only if full not available
+            file_path = CACHE_DIR / "kline_daily" / f"{symbol}.csv"
+            
+        if not file_path.exists():
+            # If still not exists, try to trigger fetch through manager (legacy behavior but in API process)
+            manager = get_stock_data_manager()
             if await manager.fetch_daily_kline(symbol):
-                df = manager.get_daily_kline(symbol, include_today=include_today)
+                # After fetch, the manager should have saved it to cache
+                manager.save_full_kline_to_cache(symbol)
+                file_path = CACHE_DIR / "kline_daily" / f"full_{symbol}.csv"
         
-        return dataframe_to_json_response(df, f"Historical K-line data for {symbol}")
+        if file_path.exists():
+            return FileResponse(file_path, media_type="text/csv", filename=f"{symbol}_kline.csv")
+        
+        raise HTTPException(status_code=404, detail=f"K-line data for {symbol} not found")
         
     except Exception as e:
         logger.error(f"Error getting historical K-line for {symbol}: {e}")
@@ -122,21 +58,15 @@ async def get_realtime_kline(
     symbol: str = Query(..., description="Stock code (e.g., 000001)")
 ):
     """
-    Get today's realtime minute-level data (分时数据) for a stock.
-    
-    **Parameters:**
-    - symbol: Stock code (e.g., "000001")
-    
-    **Returns:**
-    DataFrame format with today's minute-level trading data
+    Get today's realtime minute-level data for a stock.
     """
     try:
-        manager = get_stock_data_manager()
+        file_path = CACHE_DIR / "realtime" / f"{symbol}.csv"
         
-        # Get realtime K-line data
-        df = manager.get_realtime_kline(symbol)
+        if file_path.exists():
+            return FileResponse(file_path, media_type="text/csv", filename=f"{symbol}_realtime.csv")
         
-        return dataframe_to_json_response(df, f"Realtime data for {symbol}")
+        raise HTTPException(status_code=404, detail=f"Realtime data for {symbol} not found")
         
     except Exception as e:
         logger.error(f"Error getting realtime K-line for {symbol}: {e}")
@@ -149,25 +79,24 @@ async def get_fund_flow(
 ):
     """
     Get fund flow data (资金流向).
-    
-    **Parameters:**
-    - symbol: Stock code (optional). If provided, returns data for that stock only.
-    
-    **Returns:**
-    DataFrame format with fund flow data
     """
     try:
-        manager = get_stock_data_manager()
+        file_path = CACHE_DIR / "fund_flow" / "latest_flow.csv"
         
-        # Get fund flow data
-        df = manager.get_fund_flow(symbol)
+        if file_path.exists():
+            # If symbol is provided, we might need to filter. 
+            # But the goal is "Zero-Copy CSV Transmission". 
+            # Filtering requires loading into memory.
+            # For now, let's return the whole file if no symbol, 
+            # or if symbol is provided, we might have a choice:
+            # 1. Return whole file and let client filter (best for performance)
+            # 2. Filter here (violates zero-copy)
+            
+            # The refactor.md says "API 进程不进行数据解析和序列化，仅进行文件流转发"
+            # So we should probably just return the whole file or have Fetcher pre-filter (which is impractical for all symbols).
+            return FileResponse(file_path, media_type="text/csv", filename="fund_flow.csv")
         
-        if symbol:
-            message = f"Fund flow data for {symbol}"
-        else:
-            message = "All fund flow data"
-        
-        return dataframe_to_json_response(df, message)
+        raise HTTPException(status_code=404, detail="Fund flow data not found")
         
     except Exception as e:
         logger.error(f"Error getting fund flow data: {e}")
@@ -180,25 +109,14 @@ async def get_stock_changes(
 ):
     """
     Get stock changes data (盘口异动).
-    
-    **Parameters:**
-    - symbol: Stock code (optional). If provided, returns data for that stock only.
-    
-    **Returns:**
-    DataFrame format with stock changes data
     """
     try:
-        manager = get_stock_data_manager()
+        file_path = CACHE_DIR / "stock_changes" / "latest_changes.csv"
         
-        # Get stock changes data
-        df = manager.get_stock_changes(symbol)
+        if file_path.exists():
+            return FileResponse(file_path, media_type="text/csv", filename="stock_changes.csv")
         
-        if symbol:
-            message = f"Stock changes data for {symbol}"
-        else:
-            message = "All stock changes data"
-        
-        return dataframe_to_json_response(df, message)
+        raise HTTPException(status_code=404, detail="Stock changes data not found")
         
     except Exception as e:
         logger.error(f"Error getting stock changes data: {e}")
@@ -209,17 +127,14 @@ async def get_stock_changes(
 async def get_stock_list():
     """
     Get list of all stocks (股票列表).
-    
-    **Returns:**
-    DataFrame format with stock code and name
     """
     try:
-        manager = get_stock_data_manager()
+        file_path = CACHE_DIR / "stock_list" / "stock_info_a_code_name.csv"
         
-        # Get stock list
-        df = manager.get_stock_list()
+        if file_path.exists():
+            return FileResponse(file_path, media_type="text/csv", filename="stock_list.csv")
         
-        return dataframe_to_json_response(df, "Stock list")
+        raise HTTPException(status_code=404, detail="Stock list not found")
         
     except Exception as e:
         logger.error(f"Error getting stock list: {e}")
@@ -228,122 +143,32 @@ async def get_stock_list():
 
 @router.get("/data/status")
 async def get_data_status():
+    # ... existing code ...
+
+@router.get("/data/market-activity")
+async def get_market_activity():
     """
-    Get system data status.
-    
-    **Returns:**
-    Status information for all data types
+    Get market activity data (赚钱效应).
     """
     try:
-        manager = get_stock_data_manager()
-        status = manager.get_status()
-        
-        return {
-            "code": 200,
-            "message": "System status",
-            "data": status
-        }
-        
+        file_path = CACHE_DIR / "market_snap" / "market_activity.csv"
+        if file_path.exists():
+            return FileResponse(file_path, media_type="text/csv", filename="market_activity.csv")
+        raise HTTPException(status_code=404, detail="Market activity data not found")
     except Exception as e:
-        logger.error(f"Error getting system status: {e}")
+        logger.error(f"Error getting market activity: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.post("/data/fetch/stock-list")
-async def trigger_fetch_stock_list():
+@router.get("/data/sse-summary")
+async def get_sse_summary():
     """
-    Manually trigger stock list fetch (for testing/initialization).
-    
-    **Returns:**
-    Success status
+    Get SSE summary data (上证指数概况).
     """
     try:
-        manager = get_stock_data_manager()
-        success = await manager.fetch_stock_list()
-        
-        return {
-            "code": 200 if success else 500,
-            "message": "Stock list fetched successfully" if success else "Failed to fetch stock list",
-            "data": {
-                "count": len(manager.get_stock_list()) if success else 0
-            }
-        }
-        
+        file_path = CACHE_DIR / "market_snap" / "sse_summary.csv"
+        if file_path.exists():
+            return FileResponse(file_path, media_type="text/csv", filename="sse_summary.csv")
+        raise HTTPException(status_code=404, detail="SSE summary data not found")
     except Exception as e:
-        logger.error(f"Error fetching stock list: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/data/fetch/realtime")
-async def trigger_fetch_realtime():
-    """
-    Manually trigger realtime data fetch (for testing).
-    
-    **Returns:**
-    Success status
-    """
-    try:
-        manager = get_stock_data_manager()
-        success = await manager.fetch_realtime_data()
-        
-        return {
-            "code": 200 if success else 500,
-            "message": "Realtime data fetched successfully" if success else "Failed to fetch realtime data",
-            "data": {
-                "count": len(manager.kline_realtime)
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error fetching realtime data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/data/fetch/fund-flow")
-async def trigger_fetch_fund_flow():
-    """
-    Manually trigger fund flow data fetch (for testing).
-    
-    **Returns:**
-    Success status
-    """
-    try:
-        manager = get_stock_data_manager()
-        success = await manager.fetch_fund_flow()
-        
-        return {
-            "code": 200 if success else 500,
-            "message": "Fund flow data fetched successfully" if success else "Failed to fetch fund flow data",
-            "data": {
-                "count": len(manager.fund_flow) if success and manager.fund_flow is not None else 0
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error fetching fund flow data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/data/fetch/stock-changes")
-async def trigger_fetch_stock_changes():
-    """
-    Manually trigger stock changes data fetch (for testing).
-    
-    **Returns:**
-    Success status
-    """
-    try:
-        manager = get_stock_data_manager()
-        success = await manager.fetch_stock_changes()
-        
-        return {
-            "code": 200 if success else 500,
-            "message": "Stock changes data fetched successfully" if success else "Failed to fetch stock changes data",
-            "data": {
-                "count": len(manager.stock_changes) if success and manager.stock_changes is not None else 0
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Error fetching stock changes data: {e}")
+        logger.error(f"Error getting SSE summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))

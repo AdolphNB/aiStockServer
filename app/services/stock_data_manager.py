@@ -22,8 +22,9 @@ class StockDataManager:
     Keeps data in memory for fast access and provides file backup functionality.
     """
     
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = "data", cache_dir: str = "shared_cache"):
         self.data_dir = Path(data_dir)
+        self.cache_dir = Path(cache_dir)
         self._ensure_directories()
         
         # Thread locks for data safety
@@ -55,7 +56,7 @@ class StockDataManager:
         # Thread pool for blocking IO operations
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="stock_data_fetch")
         
-        logger.info(f"StockDataManager initialized with data directory: {self.data_dir}")
+        logger.info(f"StockDataManager initialized with data directory: {self.data_dir} and cache directory: {self.cache_dir}")
     
     def _ensure_directories(self):
         """Create necessary directories if they don't exist"""
@@ -65,10 +66,62 @@ class StockDataManager:
             self.data_dir / "kline_realtime",
             self.data_dir / "fund_flow",
             self.data_dir / "stock_changes",
+            # Shared cache directories
+            self.cache_dir / "realtime",
+            self.cache_dir / "market_snap",
+            self.cache_dir / "fund_flow",
+            self.cache_dir / "stock_changes",
+            self.cache_dir / "stock_list",
+            self.cache_dir / "kline_daily",
         ]
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Data directories ensured at {self.data_dir}")
+        logger.info(f"Data and cache directories ensured")
+
+    def atomic_write_csv(self, df: pd.DataFrame, file_path: Path):
+        """Write DataFrame to CSV atomically using a temporary file"""
+        tmp_path = file_path.with_suffix(".csv.tmp")
+        try:
+            # Ensure parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(tmp_path, index=False, encoding='utf-8-sig')
+            # Use os.replace for atomic operation on both Windows and Linux
+            os.replace(tmp_path, file_path)
+        except Exception as e:
+            logger.error(f"Error in atomic_write_csv for {file_path}: {e}")
+            if tmp_path.exists():
+                try:
+                    os.remove(tmp_path)
+                except:
+                    pass
+
+    async def fetch_market_activity(self) -> bool:
+        """Fetch market activity (legu) and save to cache"""
+        try:
+            logger.info("Fetching market activity (legu)...")
+            df = ak.stock_market_activity_legu()
+            if df is not None:
+                cache_path = self.cache_dir / "market_snap" / "market_activity.csv"
+                self.atomic_write_csv(df, cache_path)
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error fetching market activity: {e}")
+            return False
+
+    async def fetch_sse_summary(self) -> bool:
+        """Fetch SSE summary and save to cache"""
+        try:
+            logger.info("Fetching SSE summary...")
+            df = ak.stock_sse_summary()
+            if df is not None:
+                cache_path = self.cache_dir / "market_snap" / "sse_summary.csv"
+                self.atomic_write_csv(df, cache_path)
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error fetching SSE summary: {e}")
+            return False
     
     # ==================== Stock List Management ====================
     
@@ -131,6 +184,10 @@ class StockDataManager:
                 # Save to file
                 file_path = self.data_dir / "stock_list" / "stock_info_a_code_name.csv"
                 self.stock_list.to_csv(file_path, index=False, encoding='utf-8-sig')
+                
+                # Save to shared cache
+                cache_path = self.cache_dir / "stock_list" / "stock_info_a_code_name.csv"
+                self.atomic_write_csv(self.stock_list, cache_path)
                 
                 logger.info(f"Stock list fetched and saved: {len(self.stock_list)} stocks")
                 return True
@@ -238,6 +295,10 @@ class StockDataManager:
             # Save to file
             file_path = self.data_dir / "kline_daily" / f"{stock_code}.csv"
             df.to_csv(file_path, index=False, encoding='utf-8-sig')
+            
+            # Save to shared cache (full K-line)
+            cache_path = self.cache_dir / "kline_daily" / f"{stock_code}.csv"
+            self.atomic_write_csv(df, cache_path)
             
             logger.info(f"Daily K-line fetched for {stock_code}: {len(df)} records (excluding today)")
             return True
@@ -406,6 +467,10 @@ class StockDataManager:
             
             # Update in-memory data with lock (this is fast, no blocking IO)
             with self.kline_realtime_lock:
+                # Save full market snapshot to shared cache
+                market_snap_path = self.cache_dir / "market_snap" / "latest_spot.csv"
+                self.atomic_write_csv(df, market_snap_path)
+                
                 # Split by stock code and append to existing data
                 for _, row in df.iterrows():
                     stock_code = row['代码']
@@ -422,6 +487,10 @@ class StockDataManager:
                     else:
                         # Create new entry
                         self.kline_realtime[stock_code] = row_df
+                    
+                    # Save individual stock realtime data to shared cache
+                    stock_realtime_path = self.cache_dir / "realtime" / f"{stock_code}.csv"
+                    self.atomic_write_csv(self.kline_realtime[stock_code], stock_realtime_path)
                 
                 self.kline_realtime_last_updated = datetime.now()
             
@@ -535,6 +604,10 @@ class StockDataManager:
                 # Save to file
                 file_path = self.data_dir / "fund_flow" / "fund_flow_latest.csv"
                 self.fund_flow.to_csv(file_path, index=False, encoding='utf-8-sig')
+                
+                # Save to shared cache
+                cache_path = self.cache_dir / "fund_flow" / "latest_flow.csv"
+                self.atomic_write_csv(self.fund_flow, cache_path)
             
             logger.info(f"Fund flow data fetched: {len(self.fund_flow)} records")
             return True
@@ -689,6 +762,10 @@ class StockDataManager:
                 # Save to file
                 file_path = self.data_dir / "stock_changes" / "stock_changes_latest.csv"
                 self.stock_changes.to_csv(file_path, index=False, encoding='utf-8-sig')
+                
+                # Save to shared cache
+                cache_path = self.cache_dir / "stock_changes" / "latest_changes.csv"
+                self.atomic_write_csv(self.stock_changes, cache_path)
             
             logger.info(f"Stock changes data fetched: {len(self.stock_changes)} records")
             return True
@@ -773,6 +850,15 @@ class StockDataManager:
             }
         }
     
+    def save_full_kline_to_cache(self, stock_code: str):
+        """Merge historical and today's K-line and save to shared cache"""
+        df = self.get_daily_kline(stock_code, include_today=True)
+        if df is not None:
+            cache_path = self.cache_dir / "kline_daily" / f"full_{stock_code}.csv"
+            self.atomic_write_csv(df, cache_path)
+            return True
+        return False
+
     def shutdown(self):
         """Shutdown the manager and cleanup resources"""
         logger.info("Shutting down StockDataManager...")
@@ -792,6 +878,10 @@ def get_stock_data_manager() -> StockDataManager:
     if _stock_data_manager is None:
         with _manager_lock:
             if _stock_data_manager is None:
-                _stock_data_manager = StockDataManager()
+                from app.core.config import settings
+                _stock_data_manager = StockDataManager(
+                    data_dir=settings.DATA_DIR,
+                    cache_dir=settings.SHARED_CACHE_DIR
+                )
     
     return _stock_data_manager

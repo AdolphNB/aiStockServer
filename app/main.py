@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.models.models import Subscription, AdminUser, PaymentOrder
 from app.api.endpoints import client, payment, data
-from app.services.scheduler import start_scheduler, stop_scheduler
+# from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.fetcher import fetch_sse_summary
 from app.services.stock_data_manager import get_stock_data_manager
 
@@ -20,55 +20,20 @@ Base.metadata.create_all(bind=engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize stock data manager and load data
-    logger.info("Initializing stock data manager...")
+    # Initialize stock data manager
+    logger.info("Initializing stock data manager for API Server...")
     manager = get_stock_data_manager()
     
-    # Load stock list
-    await manager.load_stock_list()
-    
-    # Load daily K-lines
-    manager.load_daily_klines(days=settings.KLINE_DAYS)
-    
-    # Load realtime data, fund flow and stock changes from backup
-    # If no local data exists, fetch from source automatically (even outside trading hours) for development convenience
-    
-    # 1. Realtime K-line Data
-    if manager.load_realtime_data() == 0:
-        logger.info("No local realtime data found, fetching from source...")
-        if await manager.fetch_realtime_data():
-            # Offload saving to file to avoid blocking
-            import asyncio
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, manager.save_realtime_data_to_file)
-            logger.info("Realtime data fetched and saved to local cache")
-    
-    # 2. Fund Flow Data
-    if not manager.load_fund_flow():
-        logger.info("No local fund flow data found, fetching from source...")
-        await manager.fetch_fund_flow()
-        
-    # 3. Stock Changes Data
-    if not manager.load_stock_changes():
-        logger.info("No local stock changes data found, fetching from source...")
-        await manager.fetch_stock_changes()
-    
-    # Fetch SSE summary data immediately on startup
-    import asyncio
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, fetch_sse_summary)
-    
-    # Start scheduler
-    start_scheduler()
+    # In API mode, we don't fetch data, we just serve from shared_cache
+    # But we might want to ensure directories exist
     
     logger.info("Application starting up...")
     yield
     
     # Cleanup on shutdown
     logger.info("Application shutting down...")
-    stop_scheduler()
     manager.shutdown()
-    logger.info("Scheduler stopped, application shutdown complete.")
+    logger.info("Application shutdown complete.")
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 
@@ -129,12 +94,12 @@ def health_check():
 @app.get("/sse-summary")
 def get_sse_summary_root():
     """Get SSE summary data from root path. Public endpoint."""
-    from app.services.fetcher import get_latest_market_data
-    data = get_latest_market_data()
-    return {
-        "timestamp": data.get("sse_summary_last_updated"),
-        "data": data.get("sse_summary")
-    }
+    from fastapi.responses import FileResponse
+    from pathlib import Path
+    file_path = Path(settings.SHARED_CACHE_DIR) / "market_snap" / "sse_summary.csv"
+    if file_path.exists():
+        return FileResponse(file_path, media_type="text/csv", filename="sse_summary.csv")
+    return {"message": "SSE summary data not found"}
 
 if __name__ == "__main__":
     import uvicorn

@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     
     # Stock Data Settings
     DATA_DIR: str = "data"  # Directory for data storage
+    SHARED_CACHE_DIR: str = "shared_cache"  # Directory for high-performance shared cache
     KLINE_DAYS: int = 90  # Number of days to keep for daily K-line data
     REALTIME_FETCH_INTERVAL: int = 60  # Seconds between realtime data fetches
     FUND_FLOW_FETCH_INTERVAL: int = 300  # Seconds between fund flow fetches (5 minutes)
