@@ -80,6 +80,13 @@ class StockDataManager:
                 file_path = self.data_dir / "stock_list" / "stock_info_a_code_name.csv"
                 if file_path.exists():
                     self.stock_list = pd.read_csv(file_path)
+                    
+                    # Ensure stock code column is formatted as 6-digit string
+                    if 'code' in self.stock_list.columns:
+                        self.stock_list['code'] = self.stock_list['code'].apply(
+                            lambda x: f"{int(x):06d}" if pd.notna(x) else x
+                        )
+                    
                     self.stock_list_last_updated = datetime.fromtimestamp(file_path.stat().st_mtime)
                     logger.info(f"Loaded stock list from file: {len(self.stock_list)} stocks")
                     return True
@@ -96,6 +103,13 @@ class StockDataManager:
             try:
                 logger.info("Fetching stock list from akshare...")
                 self.stock_list = ak.stock_info_a_code_name()
+                
+                # Ensure stock code column is formatted as 6-digit string
+                if 'code' in self.stock_list.columns:
+                    self.stock_list['code'] = self.stock_list['code'].apply(
+                        lambda x: f"{int(x):06d}" if pd.notna(x) else x
+                    )
+                
                 self.stock_list_last_updated = datetime.now()
                 
                 # Save to file
@@ -137,6 +151,10 @@ class StockDataManager:
                     if len(df) > days:
                         df = df.tail(days)
                     
+                    # Ensure stock code column is formatted as 6-digit string
+                    if '股票代码' in df.columns:
+                        df['股票代码'] = df['股票代码'].apply(lambda x: f"{int(x):06d}" if pd.notna(x) else stock_code)
+                    
                     self.kline_daily[stock_code] = df
                     self.kline_daily_last_updated[stock_code] = datetime.fromtimestamp(csv_file.stat().st_mtime)
                     loaded_count += 1
@@ -160,6 +178,13 @@ class StockDataManager:
             # Keep only the last N days
             if len(df) > days:
                 df = df.tail(days)
+            
+            # Ensure stock code column is formatted as 6-digit string
+            if '股票代码' in df.columns:
+                df['股票代码'] = df['股票代码'].apply(lambda x: f"{int(x):06d}" if pd.notna(x) else stock_code)
+            else:
+                # Add stock code column if it doesn't exist
+                df.insert(1, '股票代码', stock_code)
             
             with self.kline_daily_lock:
                 self.kline_daily[stock_code] = df
@@ -188,6 +213,13 @@ class StockDataManager:
             if include_today:
                 today_kline = self._calculate_today_kline(stock_code)
                 if today_kline is not None:
+                    today_str = date.today().strftime('%Y-%m-%d')
+                    
+                    # Check if today's date already exists in historical data
+                    if '日期' in result.columns:
+                        # Remove existing today's data if present
+                        result = result[result['日期'] != today_str]
+                    
                     # Append today's data
                     result = pd.concat([result, today_kline], ignore_index=True)
             
@@ -201,19 +233,48 @@ class StockDataManager:
                 return None
             
             try:
-                # Calculate today's K-line from realtime data
+                # Get yesterday's close price for calculating change
+                yesterday_close = None
+                with self.kline_daily_lock:
+                    historical_df = self.kline_daily.get(stock_code)
+                    if historical_df is not None and len(historical_df) > 0:
+                        yesterday_close = historical_df.iloc[-1]['收盘']
+                
+                # Calculate today's K-line values
+                open_price = realtime_df.iloc[0]['最新价']
+                close_price = realtime_df.iloc[-1]['最新价']
+                high_price = realtime_df['最新价'].max()
+                low_price = realtime_df['最新价'].min()
+                volume = realtime_df['成交量'].sum()
+                amount = realtime_df['成交额'].sum()
+                
+                # Calculate amplitude, change rate and change amount if we have yesterday's close
+                amplitude = 0
+                change_pct = 0
+                change_amt = 0
+                if yesterday_close is not None and yesterday_close > 0:
+                    amplitude = round(((high_price - low_price) / yesterday_close) * 100, 2)
+                    change_amt = round(close_price - yesterday_close, 2)
+                    change_pct = round((change_amt / yesterday_close) * 100, 2)
+                
+                # Build today's data with consistent column order
+                # Match the order from akshare: 日期, 股票代码, 开盘, 收盘, 最高, 最低, 成交量, 成交额, 振幅, 涨跌幅, 涨跌额, 换手率
+                # Ensure stock code is 6-digit format
+                formatted_code = f"{int(stock_code):06d}" if stock_code.isdigit() else stock_code
+                
                 today_data = {
                     '日期': date.today().strftime('%Y-%m-%d'),
-                    '开盘': realtime_df.iloc[0]['最新价'],
-                    '收盘': realtime_df.iloc[-1]['最新价'],
-                    '最高': realtime_df['最新价'].max(),
-                    '最低': realtime_df['最新价'].min(),
-                    '成交量': realtime_df['成交量'].sum(),
-                    '成交额': realtime_df['成交额'].sum(),
-                    '振幅': 0,  # Calculate if needed
-                    '涨跌幅': 0,  # Calculate if needed
-                    '涨跌额': 0,  # Calculate if needed
-                    '换手率': 0,  # Calculate if needed
+                    '股票代码': formatted_code,
+                    '开盘': open_price,
+                    '收盘': close_price,
+                    '最高': high_price,
+                    '最低': low_price,
+                    '成交量': volume,
+                    '成交额': amount,
+                    '振幅': amplitude,
+                    '涨跌幅': change_pct,
+                    '涨跌额': change_amt,
+                    '换手率': 0,  # Cannot calculate without total shares
                 }
                 
                 return pd.DataFrame([today_data])
@@ -235,6 +296,11 @@ class StockDataManager:
                 try:
                     stock_code = csv_file.stem
                     df = pd.read_csv(csv_file)
+                    
+                    # Ensure stock code column is formatted as 6-digit string
+                    if '代码' in df.columns:
+                        df['代码'] = df['代码'].apply(lambda x: f"{int(x):06d}" if pd.notna(x) else stock_code)
+                    
                     self.kline_realtime[stock_code] = df
                     # Set timestamp to file modification time if not already set
                     if not self.kline_realtime_last_updated:
@@ -259,6 +325,10 @@ class StockDataManager:
             if df is None or len(df) == 0:
                 logger.warning("No realtime data fetched")
                 return None
+            
+            # Ensure stock code column is formatted as 6-digit string
+            if '代码' in df.columns:
+                df['代码'] = df['代码'].apply(lambda x: f"{int(x):06d}" if pd.notna(x) else x)
             
             # Add timestamp
             df['时间'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -357,6 +427,15 @@ class StockDataManager:
                 file_path = self.data_dir / "fund_flow" / "fund_flow_latest.csv"
                 if file_path.exists():
                     self.fund_flow = pd.read_csv(file_path)
+                    
+                    # Ensure stock code column is formatted as 6-digit string
+                    for col_name in ['代码', '股票代码', 'code']:
+                        if col_name in self.fund_flow.columns:
+                            self.fund_flow[col_name] = self.fund_flow[col_name].apply(
+                                lambda x: f"{int(x):06d}" if pd.notna(x) else x
+                            )
+                            break
+                    
                     self.fund_flow_last_updated = datetime.fromtimestamp(file_path.stat().st_mtime)
                     logger.info(f"Loaded fund flow data: {len(self.fund_flow)} records")
                     return True
@@ -375,6 +454,13 @@ class StockDataManager:
             df = ak.stock_fund_flow_individual(symbol="即时")
             if df is not None and not df.empty:
                 logger.info(f"Fund flow columns: {df.columns.tolist()}")
+                
+                # Ensure stock code column is formatted as 6-digit string
+                # Check for common code column names
+                for col_name in ['代码', '股票代码', 'code']:
+                    if col_name in df.columns:
+                        df[col_name] = df[col_name].apply(lambda x: f"{int(x):06d}" if pd.notna(x) else x)
+                        break
             return df
         except Exception as e:
             logger.error(f"Error fetching fund flow data: {e}")
@@ -473,6 +559,15 @@ class StockDataManager:
                 file_path = self.data_dir / "stock_changes" / "stock_changes_latest.csv"
                 if file_path.exists():
                     self.stock_changes = pd.read_csv(file_path)
+                    
+                    # Ensure stock code column is formatted as 6-digit string
+                    for col_name in ['代码', '股票代码', 'code']:
+                        if col_name in self.stock_changes.columns:
+                            self.stock_changes[col_name] = self.stock_changes[col_name].apply(
+                                lambda x: f"{int(x):06d}" if pd.notna(x) else x
+                            )
+                            break
+                    
                     self.stock_changes_last_updated = datetime.fromtimestamp(file_path.stat().st_mtime)
                     logger.info(f"Loaded stock changes data: {len(self.stock_changes)} records")
                     return True
@@ -506,7 +601,17 @@ class StockDataManager:
                     continue
             
             if all_changes:
-                return pd.concat(all_changes, ignore_index=True)
+                result_df = pd.concat(all_changes, ignore_index=True)
+                
+                # Ensure stock code column is formatted as 6-digit string
+                for col_name in ['代码', '股票代码', 'code']:
+                    if col_name in result_df.columns:
+                        result_df[col_name] = result_df[col_name].apply(
+                            lambda x: f"{int(x):06d}" if pd.notna(x) else x
+                        )
+                        break
+                
+                return result_df
             else:
                 logger.warning("No stock changes data fetched")
                 return None
