@@ -415,34 +415,34 @@ class StockDataManager:
             low_price = latest_row.get('最低', 0)
             volume = latest_row.get('成交量', 0)
             amount = latest_row.get('成交额', 0)
-                amplitude = latest_row.get('振幅', 0)
-                change_pct = latest_row.get('涨跌幅', 0)
-                change_amt = latest_row.get('涨跌额', 0)
-                turnover = latest_row.get('换手率', 0)
-                
-                # Ensure stock code is 6-digit format
-                formatted_code = f"{int(stock_code):06d}" if str(stock_code).isdigit() else str(stock_code)
-                
-                # Build today's data with consistent column order
-                today_data = {
-                    '日期': date.today().strftime('%Y-%m-%d'),
-                    '股票代码': formatted_code,
-                    '开盘': open_price,
-                    '收盘': close_price,
-                    '最高': high_price,
-                    '最低': low_price,
-                    '成交量': volume,
-                    '成交额': amount,
-                    '振幅': amplitude,
-                    '涨跌幅': change_pct,
-                    '涨跌额': change_amt,
-                    '换手率': turnover,
-                }
-                
-                return pd.DataFrame([today_data])
-            except Exception as e:
-                logger.error(f"Error calculating today's K-line for {stock_code}: {e}")
-                return None
+            amplitude = latest_row.get('振幅', 0)
+            change_pct = latest_row.get('涨跌幅', 0)
+            change_amt = latest_row.get('涨跌额', 0)
+            turnover = latest_row.get('换手率', 0)
+            
+            # Ensure stock code is 6-digit format
+            formatted_code = f"{int(stock_code):06d}" if str(stock_code).isdigit() else str(stock_code)
+            
+            # Build today's data with consistent column order
+            today_data = {
+                '日期': date.today().strftime('%Y-%m-%d'),
+                '股票代码': formatted_code,
+                '开盘': open_price,
+                '收盘': close_price,
+                '最高': high_price,
+                '最低': low_price,
+                '成交量': volume,
+                '成交额': amount,
+                '振幅': amplitude,
+                '涨跌幅': change_pct,
+                '涨跌额': change_amt,
+                '换手率': turnover,
+            }
+            
+            return pd.DataFrame([today_data])
+        except Exception as e:
+            logger.error(f"Error calculating today's K-line for {stock_code}: {e}")
+            return None
     
     # ==================== Realtime K-Line Management ====================
     
