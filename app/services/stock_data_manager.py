@@ -260,35 +260,26 @@ class StockDataManager:
                 return None
             
             try:
-                # Get yesterday's close price for calculating change
-                yesterday_close = None
-                with self.kline_daily_lock:
-                    historical_df = self.kline_daily.get(stock_code)
-                    if historical_df is not None and len(historical_df) > 0:
-                        yesterday_close = historical_df.iloc[-1]['收盘']
+                # Use the LATEST snapshot as it contains cumulative data for the day
+                latest_row = realtime_df.iloc[-1]
                 
-                # Calculate today's K-line values
-                open_price = realtime_df.iloc[0]['最新价']
-                close_price = realtime_df.iloc[-1]['最新价']
-                high_price = realtime_df['最新价'].max()
-                low_price = realtime_df['最新价'].min()
-                volume = realtime_df['成交量'].sum()
-                amount = realtime_df['成交额'].sum()
+                # Extract values directly from realtime data fields
+                # These fields in ak.stock_zh_a_spot_em are already daily totals/stats
+                open_price = latest_row.get('今开', 0)
+                close_price = latest_row.get('最新价', 0)
+                high_price = latest_row.get('最高', 0)
+                low_price = latest_row.get('最低', 0)
+                volume = latest_row.get('成交量', 0)
+                amount = latest_row.get('成交额', 0)
+                amplitude = latest_row.get('振幅', 0)
+                change_pct = latest_row.get('涨跌幅', 0)
+                change_amt = latest_row.get('涨跌额', 0)
+                turnover = latest_row.get('换手率', 0)
                 
-                # Calculate amplitude, change rate and change amount if we have yesterday's close
-                amplitude = 0
-                change_pct = 0
-                change_amt = 0
-                if yesterday_close is not None and yesterday_close > 0:
-                    amplitude = round(((high_price - low_price) / yesterday_close) * 100, 2)
-                    change_amt = round(close_price - yesterday_close, 2)
-                    change_pct = round((change_amt / yesterday_close) * 100, 2)
+                # Ensure stock code is 6-digit format
+                formatted_code = f"{int(stock_code):06d}" if str(stock_code).isdigit() else str(stock_code)
                 
                 # Build today's data with consistent column order
-                # Match the order from akshare: 日期, 股票代码, 开盘, 收盘, 最高, 最低, 成交量, 成交额, 振幅, 涨跌幅, 涨跌额, 换手率
-                # Ensure stock code is 6-digit format
-                formatted_code = f"{int(stock_code):06d}" if stock_code.isdigit() else stock_code
-                
                 today_data = {
                     '日期': date.today().strftime('%Y-%m-%d'),
                     '股票代码': formatted_code,
@@ -301,7 +292,7 @@ class StockDataManager:
                     '振幅': amplitude,
                     '涨跌幅': change_pct,
                     '涨跌额': change_amt,
-                    '换手率': 0,  # Cannot calculate without total shares
+                    '换手率': turnover,
                 }
                 
                 return pd.DataFrame([today_data])
