@@ -49,6 +49,8 @@ async def get_historical_kline(
         
         raise HTTPException(status_code=404, detail=f"K-line data for {symbol} not found")
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting historical K-line for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -83,6 +85,8 @@ async def get_realtime_kline(
         
         raise HTTPException(status_code=404, detail=f"Realtime data for {symbol} not found")
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting realtime K-line for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -113,6 +117,8 @@ async def get_fund_flow(
         
         raise HTTPException(status_code=404, detail="Fund flow data not found")
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting fund flow data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -132,7 +138,9 @@ async def get_stock_changes(
             return FileResponse(file_path, media_type="text/csv", filename="stock_changes.csv")
         
         raise HTTPException(status_code=404, detail="Stock changes data not found")
-        
+    
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting stock changes data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -151,6 +159,8 @@ async def get_stock_list():
         
         raise HTTPException(status_code=404, detail="Stock list not found")
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting stock list: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -192,6 +202,8 @@ async def get_data_status():
             "data": status
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -206,6 +218,8 @@ async def get_market_activity():
         if file_path.exists():
             return FileResponse(file_path, media_type="text/csv", filename="market_activity.csv")
         raise HTTPException(status_code=404, detail="Market activity data not found")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting market activity: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -220,6 +234,8 @@ async def get_sse_summary():
         if file_path.exists():
             return FileResponse(file_path, media_type="text/csv", filename="sse_summary.csv")
         raise HTTPException(status_code=404, detail="SSE summary data not found")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting SSE summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
