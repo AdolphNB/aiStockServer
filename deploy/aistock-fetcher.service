@@ -1,0 +1,15 @@
+[Unit]
+Description=AIStock Data Fetcher
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/aiStockServer
+Environment="PATH=/opt/aiStockServer/venv/bin"
+# Run the watchdog script
+ExecStart=/opt/aiStockServer/venv/bin/python run_fetcher.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

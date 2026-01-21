@@ -44,16 +44,29 @@ class FetcherEngine:
         now = datetime.now().time()
         return now > dt_time(15, 0) and now < dt_time(15, 35)
 
+    async def _run_with_timeout(self, coro, timeout=60, task_name="Task"):
+        """Run a coroutine with a timeout"""
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error(f"{task_name} timed out after {timeout} seconds")
+            # We don't exit here, we just log it. The next tick will try again.
+            # But if the thread pool is clogged, subsequent tasks will also fail (or wait).
+            return None
+        except Exception as e:
+            logger.error(f"Error in {task_name}: {e}")
+            return None
+
     async def tick_stock_list(self):
         """Weekly update of stock list"""
         logger.info("Updating stock list...")
-        await self.manager.fetch_stock_list()
+        await self._run_with_timeout(self.manager.fetch_stock_list(), timeout=300, task_name="StockList")
 
     async def tick_realtime_market_data(self):
         """Fetch realtime market data every minute"""
         if self.is_trading_time():
             logger.info("Fetching realtime market data...")
-            await self.manager.fetch_realtime_data()
+            await self._run_with_timeout(self.manager.fetch_realtime_data(), timeout=45, task_name="RealtimeData")
         else:
             logger.debug("Not trading time, skipping realtime fetch.")
 
@@ -61,26 +74,30 @@ class FetcherEngine:
         """Fetch fund flow data every 5 minutes"""
         if self.is_trading_time():
             logger.info("Fetching fund flow data...")
-            await self.manager.fetch_fund_flow()
+            await self._run_with_timeout(self.manager.fetch_fund_flow(), timeout=120, task_name="FundFlow")
 
     async def tick_stock_changes(self):
         """Fetch stock changes data every 5 minutes"""
         if self.is_trading_time():
             logger.info("Fetching stock changes data...")
-            await self.manager.fetch_stock_changes()
+            await self._run_with_timeout(self.manager.fetch_stock_changes(), timeout=120, task_name="StockChanges")
 
     async def tick_market_close_backup(self):
         """Backup data after market close"""
         if self.is_market_closed():
             logger.info("Market closed, running backup...")
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.manager.save_realtime_data_to_file)
+            await self._run_with_timeout(
+                loop.run_in_executor(None, self.manager.save_realtime_data_to_file), 
+                timeout=300, 
+                task_name="MarketCloseBackup"
+            )
 
     async def tick_market_data(self):
         """Fetch general market data (market activity and sse summary)"""
         logger.info("Fetching market general data...")
-        await self.manager.fetch_market_activity()
-        await self.manager.fetch_sse_summary()
+        await self._run_with_timeout(self.manager.fetch_market_activity(), timeout=60, task_name="MarketActivity")
+        await self._run_with_timeout(self.manager.fetch_sse_summary(), timeout=60, task_name="SSESummary")
 
     def start(self):
         logger.info("Starting Fetcher Engine Scheduler...")

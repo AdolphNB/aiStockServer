@@ -234,17 +234,72 @@ class StockDataManager:
             logger.error(f"Error in async fetch stock list: {e}")
             return False
     
+    def _check_and_reload_if_needed(self, file_path: Path, last_updated_attr: str, loader_func):
+        """
+        Check if file has been modified since last load, and reload if necessary.
+        Uses a throttle to avoid excessive file system checks (e.g. max once per 5 seconds).
+        """
+        try:
+            if not file_path.exists():
+                return
+
+            # Get current time and last check time
+            now = datetime.now()
+            last_check_attr = f"_{last_updated_attr}_check_time"
+            last_check = getattr(self, last_check_attr, None)
+            
+            # Throttle: check file system at most once every 5 seconds
+            if last_check and (now - last_check).total_seconds() < 5:
+                return
+
+            setattr(self, last_check_attr, now)
+            
+            # Check file modification time
+            file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+            last_updated = getattr(self, last_updated_attr)
+            
+            # If never loaded or file is newer, reload
+            if last_updated is None or file_mtime > last_updated:
+                logger.info(f"File {file_path.name} updated, reloading...")
+                loader_func()
+                
+        except Exception as e:
+            logger.error(f"Error checking reload for {file_path.name}: {e}")
+
     def get_stock_list(self) -> Optional[pd.DataFrame]:
-        """Get stock list"""
+        """Get stock list (auto-reloads if file changed)"""
+        # Check if reload needed
+        file_path = self.data_dir / "stock_list" / "stock_info_a_code_name.csv"
+        # We use a synchronous wrapper for the async loader or just use read_csv directly
+        # Since this is a getter, we prefer the simple read_csv approach used in load_stock_list
+        # But load_stock_list is async. Let's make a sync version for reloading or reuse logic.
+        
+        # To avoid async complexity in getter, we implement a simple sync reload here
+        def sync_reload():
+            try:
+                df = pd.read_csv(file_path)
+                with self.stock_list_lock:
+                    self.stock_list = df
+                    if 'code' in self.stock_list.columns:
+                        self.stock_list['code'] = self.stock_list['code'].apply(
+                            lambda x: f"{int(x):06d}" if pd.notna(x) else x
+                        )
+                    self.stock_list_last_updated = datetime.fromtimestamp(file_path.stat().st_mtime)
+            except Exception as e:
+                logger.error(f"Error reloading stock list: {e}")
+
+        self._check_and_reload_if_needed(file_path, "stock_list_last_updated", sync_reload)
+        
         with self.stock_list_lock:
             return self.stock_list.copy() if self.stock_list is not None else None
     
     def get_stock_codes(self) -> List[str]:
         """Get all stock codes"""
-        with self.stock_list_lock:
-            if self.stock_list is None:
-                return []
-            return self.stock_list['code'].tolist()
+        # Trigger reload check via get_stock_list
+        df = self.get_stock_list()
+        if df is None:
+            return []
+        return df['code'].tolist()
     
     # ==================== Daily K-Line Management ====================
     
@@ -707,7 +762,27 @@ class StockDataManager:
             self.is_fetching_fund_flow = False
     
     def get_fund_flow(self, stock_code: Optional[str] = None) -> Optional[pd.DataFrame]:
-        """Get fund flow data, optionally filtered by stock code"""
+        """Get fund flow data, optionally filtered by stock code (auto-reloads if file changed)"""
+        
+        # Check reload
+        file_path = self.data_dir / "fund_flow" / "fund_flow_latest.csv"
+        
+        def sync_reload():
+            try:
+                with self.fund_flow_lock:
+                    self.fund_flow = pd.read_csv(file_path)
+                    for col_name in ['代码', '股票代码', 'code']:
+                        if col_name in self.fund_flow.columns:
+                            self.fund_flow[col_name] = self.fund_flow[col_name].apply(
+                                lambda x: f"{int(x):06d}" if pd.notna(x) else x
+                            )
+                            break
+                    self.fund_flow_last_updated = datetime.fromtimestamp(file_path.stat().st_mtime)
+            except Exception as e:
+                logger.error(f"Error reloading fund flow: {e}")
+                
+        self._check_and_reload_if_needed(file_path, "fund_flow_last_updated", sync_reload)
+
         with self.fund_flow_lock:
             if self.fund_flow is None:
                 return None
@@ -865,7 +940,27 @@ class StockDataManager:
             self.is_fetching_stock_changes = False
     
     def get_stock_changes(self, stock_code: Optional[str] = None) -> Optional[pd.DataFrame]:
-        """Get stock changes data, optionally filtered by stock code"""
+        """Get stock changes data, optionally filtered by stock code (auto-reloads if file changed)"""
+        
+        # Check reload
+        file_path = self.data_dir / "stock_changes" / "stock_changes_latest.csv"
+        
+        def sync_reload():
+            try:
+                with self.stock_changes_lock:
+                    self.stock_changes = pd.read_csv(file_path)
+                    for col_name in ['代码', '股票代码', 'code']:
+                        if col_name in self.stock_changes.columns:
+                            self.stock_changes[col_name] = self.stock_changes[col_name].apply(
+                                lambda x: f"{int(x):06d}" if pd.notna(x) else x
+                            )
+                            break
+                    self.stock_changes_last_updated = datetime.fromtimestamp(file_path.stat().st_mtime)
+            except Exception as e:
+                logger.error(f"Error reloading stock changes: {e}")
+
+        self._check_and_reload_if_needed(file_path, "stock_changes_last_updated", sync_reload)
+
         with self.stock_changes_lock:
             if self.stock_changes is None:
                 return None

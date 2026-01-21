@@ -1,0 +1,14 @@
+[Unit]
+Description=AIStock API Server
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/aiStockServer
+Environment="PATH=/opt/aiStockServer/venv/bin"
+ExecStart=/opt/aiStockServer/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
