@@ -1,25 +1,34 @@
 import akshare as ak
 import pandas as pd
 import logging
+import time
 from datetime import datetime
 from app.core.config_v2 import settings
 from app.db.session import realtime_sync_engine
 
 logger = logging.getLogger("FetcherEngine")
 
-def fetch_market_snapshot():
-    """Fetch full market snapshot from Akshare"""
-    try:
-        logger.info("Fetching data from ak.stock_zh_a_spot_em()...")
-        # Added a default timeout via internal logic or just rely on the wrapper
-        df = ak.stock_zh_a_spot_em()
-        if df is None or df.empty:
+def fetch_market_snapshot(retries=3, delay=5):
+    """
+    Fetch full market snapshot from Akshare.
+    Includes retry logic for handling transient network errors.
+    """
+    for i in range(retries):
+        try:
+            logger.info(f"Fetching data from ak.stock_zh_a_spot_em() (Attempt {i+1}/{retries})...")
+            df = ak.stock_zh_a_spot_em()
+            if df is not None and not df.empty:
+                return df
             logger.warning("Fetched empty data from Akshare.")
-            return None
-        return df
-    except Exception as e:
-        logger.error(f"Error fetching from Akshare: {e}")
-        return None
+        except Exception as e:
+            logger.error(f"Error fetching from Akshare (Attempt {i+1}): {e}")
+            if i < retries - 1:
+                wait = delay * (2 ** i) # Exponential backoff
+                logger.info(f"Retrying in {wait} seconds...")
+                time.sleep(wait)
+            else:
+                logger.error("Max retries reached. Fetching failed.")
+    return None
 
 def process_snapshot_to_kline(df: pd.DataFrame):
     """Transform snapshot data to 1-minute K-line format"""
