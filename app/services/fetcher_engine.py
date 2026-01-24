@@ -11,6 +11,18 @@ from app.services.trading_calendar import get_trading_calendar_service
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+import logging
+import asyncio
+import socket
+from pathlib import Path
+from datetime import datetime, time as dt_time, date
+
+from app.core.config import settings
+from app.services.stock_data_manager import get_stock_data_manager
+from app.services.trading_calendar import get_trading_calendar_service
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +32,11 @@ logger = logging.getLogger("FetcherEngine")
 
 class FetcherEngine:
     def __init__(self):
+        # Set global socket timeout to prevent akshare from hanging indefinitely
+        # This is critical for preventing thread pool exhaustion
+        socket.setdefaulttimeout(30)
+        logger.info("Global socket timeout set to 30 seconds")
+        
         self.manager = get_stock_data_manager()
         self.scheduler = AsyncIOScheduler()
         self.trading_calendar = get_trading_calendar_service()
