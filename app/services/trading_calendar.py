@@ -144,6 +144,28 @@ class TradingCalendarService:
                     return prev_date
         
         return None
+
+    def is_trading_hour(self) -> bool:
+        """
+        Check if current time is within SSE trading hours:
+        9:30 - 11:30 and 13:00 - 15:00
+        """
+        now = datetime.now()
+        current_time = now.time()
+        
+        # Morning session: 09:30 - 11:30
+        morning_start = datetime.strptime("09:30:00", "%H:%M:%S").time()
+        morning_end = datetime.strptime("11:30:00", "%H:%M:%S").time()
+        
+        # Afternoon session: 13:00 - 15:00
+        afternoon_start = datetime.strptime("13:00:00", "%H:%M:%S").time()
+        afternoon_end = datetime.strptime("15:00:00", "%H:%M:%S").time()
+        
+        if (morning_start <= current_time <= morning_end) or \
+           (afternoon_start <= current_time <= afternoon_end):
+            return True
+            
+        return False
     
     def get_cache_info(self) -> dict:
         """Get information about the cache"""
