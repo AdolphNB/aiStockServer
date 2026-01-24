@@ -1,147 +1,62 @@
-import os
-import time
+import akshare as ak
+import pandas as pd
 import logging
-import asyncio
-from pathlib import Path
-from datetime import datetime, time as dt_time, date
+from datetime import datetime
+from app.core.config_v2 import settings
+from app.db.session import realtime_sync_engine
 
-from app.core.config import settings
-from app.services.stock_data_manager import get_stock_data_manager
-from app.services.trading_calendar import get_trading_calendar_service
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-
-import logging
-import asyncio
-import socket
-from pathlib import Path
-from datetime import datetime, time as dt_time, date
-
-from app.core.config import settings
-from app.services.stock_data_manager import get_stock_data_manager
-from app.services.trading_calendar import get_trading_calendar_service
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger("FetcherEngine")
 
-class FetcherEngine:
-    def __init__(self):
-        # Set global socket timeout to prevent akshare from hanging indefinitely
-        # This is critical for preventing thread pool exhaustion
-        socket.setdefaulttimeout(30)
-        logger.info("Global socket timeout set to 30 seconds")
-        
-        self.manager = get_stock_data_manager()
-        self.scheduler = AsyncIOScheduler()
-        self.trading_calendar = get_trading_calendar_service()
-
-    def is_trading_time(self):
-        """Check if current time is within trading hours and is a trading day"""
-        if not self.trading_calendar.is_trading_day(date.today()):
-            return False
-        
-        now = datetime.now().time()
-        morning_start = dt_time(9, 15)
-        morning_end = dt_time(11, 30)
-        afternoon_start = dt_time(13, 0)
-        afternoon_end = dt_time(15, 0)
-        
-        return (morning_start <= now <= morning_end) or (afternoon_start <= now <= afternoon_end)
-
-    def is_market_closed(self):
-        """Check if market has just closed"""
-        if not self.trading_calendar.is_trading_day(date.today()):
-            return False
-        now = datetime.now().time()
-        return now > dt_time(15, 0) and now < dt_time(15, 35)
-
-    async def _run_with_timeout(self, coro, timeout=60, task_name="Task"):
-        """Run a coroutine with a timeout"""
-        try:
-            return await asyncio.wait_for(coro, timeout=timeout)
-        except asyncio.TimeoutError:
-            logger.error(f"{task_name} timed out after {timeout} seconds")
-            # We don't exit here, we just log it. The next tick will try again.
-            # But if the thread pool is clogged, subsequent tasks will also fail (or wait).
+def fetch_market_snapshot():
+    """Fetch full market snapshot from Akshare"""
+    try:
+        logger.info("Fetching data from ak.stock_zh_a_spot_em()...")
+        # Added a default timeout via internal logic or just rely on the wrapper
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty:
+            logger.warning("Fetched empty data from Akshare.")
             return None
-        except Exception as e:
-            logger.error(f"Error in {task_name}: {e}")
-            return None
+        return df
+    except Exception as e:
+        logger.error(f"Error fetching from Akshare: {e}")
+        return None
 
-    async def tick_stock_list(self):
-        """Weekly update of stock list"""
-        logger.info("Updating stock list...")
-        await self._run_with_timeout(self.manager.fetch_stock_list(), timeout=300, task_name="StockList")
+def process_snapshot_to_kline(df: pd.DataFrame):
+    """Transform snapshot data to 1-minute K-line format"""
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    current_time = now.strftime("%H:%M")
+    
+    # Required columns mapping based on user input
+    # 序号 代码 名称 最新价 ... 涨速
+    kline_df = pd.DataFrame()
+    kline_df['code'] = df['代码']
+    kline_df['date'] = today
+    kline_df['time'] = current_time
+    kline_df['open'] = df['最新价']
+    kline_df['high'] = df['最新价']
+    kline_df['low'] = df['最新价']
+    kline_df['close'] = df['最新价']
+    kline_df['volume'] = df['成交量']
+    kline_df['created_at'] = now
+    
+    return kline_df
 
-    async def tick_realtime_market_data(self):
-        """Fetch realtime market data every minute"""
-        if self.is_trading_time():
-            logger.info("Fetching realtime market data...")
-            await self._run_with_timeout(self.manager.fetch_realtime_data(), timeout=45, task_name="RealtimeData")
-        else:
-            logger.debug("Not trading time, skipping realtime fetch.")
-
-    async def tick_fund_flow(self):
-        """Fetch fund flow data every 5 minutes"""
-        if self.is_trading_time():
-            logger.info("Fetching fund flow data...")
-            await self._run_with_timeout(self.manager.fetch_fund_flow(), timeout=120, task_name="FundFlow")
-
-    async def tick_stock_changes(self):
-        """Fetch stock changes data every 5 minutes"""
-        if self.is_trading_time():
-            logger.info("Fetching stock changes data...")
-            await self._run_with_timeout(self.manager.fetch_stock_changes(), timeout=120, task_name="StockChanges")
-
-    async def tick_market_close_backup(self):
-        """Backup data after market close"""
-        if self.is_market_closed():
-            logger.info("Market closed, running backup...")
-            loop = asyncio.get_event_loop()
-            await self._run_with_timeout(
-                loop.run_in_executor(None, self.manager.save_realtime_data_to_file), 
-                timeout=300, 
-                task_name="MarketCloseBackup"
-            )
-
-    async def tick_market_data(self):
-        """Fetch general market data (market activity and sse summary)"""
-        logger.info("Fetching market general data...")
-        await self._run_with_timeout(self.manager.fetch_market_activity(), timeout=60, task_name="MarketActivity")
-        await self._run_with_timeout(self.manager.fetch_sse_summary(), timeout=60, task_name="SSESummary")
-
-    def start(self):
-        logger.info("Starting Fetcher Engine Scheduler...")
+def save_kline_batch(df: pd.DataFrame):
+    """Batch save to SQLite using synchronization engine for speed"""
+    if df is None or df.empty:
+        return
         
-        # Initial fetch
-        asyncio.create_task(self.tick_stock_list())
-        asyncio.create_task(self.tick_market_data())
-        
-        # Add jobs
-        self.scheduler.add_job(self.tick_stock_list, CronTrigger(day_of_week='mon', hour=9, minute=0))
-        self.scheduler.add_job(self.tick_market_data, 'interval', seconds=60)
-        self.scheduler.add_job(self.tick_realtime_market_data, 'interval', seconds=60)
-        self.scheduler.add_job(self.tick_fund_flow, 'interval', seconds=300)
-        self.scheduler.add_job(self.tick_stock_changes, 'interval', seconds=300)
-        self.scheduler.add_job(self.tick_market_close_backup, 'interval', seconds=60)
-        
-        self.scheduler.start()
-        
-    async def run_forever(self):
-        self.start()
-        try:
-            while True:
-                await asyncio.sleep(1)
-        except (KeyboardInterrupt, SystemExit):
-            self.scheduler.shutdown()
-            self.manager.shutdown()
-
-if __name__ == "__main__":
-    engine = FetcherEngine()
-    asyncio.run(engine.run_forever())
+    try:
+        # to_sql is very efficient for large batches in WAL mode
+        df.to_sql(
+            'intraday_kline', 
+            con=realtime_sync_engine, 
+            if_exists='append', 
+            index=False,
+            chunksize=5000 # Save all in one or two chunks
+        )
+        logger.info(f"Successfully saved {len(df)} records to database.")
+    except Exception as e:
+        logger.error(f"Error saving to database: {e}")
+        raise # Re-raise to trigger timeout/retry logic if needed

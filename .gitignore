@@ -19,3 +19,18 @@ bin-release/
 # Python bytecode
 __pycache__/
 *.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+
+# Project Data
+data/
+*.db
+*.log
+
+# IDEs
+.vscode/
+.idea/
