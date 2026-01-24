@@ -24,8 +24,10 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing stock data manager for API Server...")
     manager = get_stock_data_manager()
     
-    # In API mode, we don't fetch data, we just serve from shared_cache
-    # But we might want to ensure directories exist
+    # Check if we have basic data, if not fetch it
+    # This ensures clients can get data even when starting on non-trading days
+    logger.info("Checking for initial data availability...")
+    await manager.ensure_initial_data()
     
     logger.info("Application starting up...")
     yield

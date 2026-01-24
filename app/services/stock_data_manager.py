@@ -54,6 +54,7 @@ class StockDataManager:
         self.is_fetching_realtime = False
         self.is_fetching_fund_flow = False
         self.is_fetching_stock_changes = False
+        self._initial_data_loaded = False
         
         # Thread pool for blocking IO operations
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="stock_data_fetch")
@@ -317,7 +318,9 @@ class StockDataManager:
                     
                     # Keep only the last N days
                     if len(df) > days:
-                        df = df.tail(days)
+                        df = df.tail(days).copy()
+                    else:
+                        df = df.copy()
                     
                     # Remove today's data if present (today's data will be calculated from realtime data)
                     if '日期' in df.columns:
@@ -368,7 +371,9 @@ class StockDataManager:
             
             # Keep only the last N days
             if len(df) > days:
-                df = df.tail(days)
+                df = df.tail(days).copy()
+            else:
+                df = df.copy()
             
             # Remove today's data if present
             if '日期' in df.columns:
@@ -530,30 +535,51 @@ class StockDataManager:
                 logger.info(f"Loaded realtime data for {loaded_count} stocks")
             return loaded_count
 
-    def _fetch_realtime_data_blocking(self) -> Optional[pd.DataFrame]:
+    def _fetch_realtime_data_blocking(self, retries: int = 3, delay: int = 2) -> Optional[pd.DataFrame]:
         """
-        Blocking function to fetch realtime data from akshare.
+        Blocking function to fetch realtime data from akshare with retry logic.
         This runs in a thread pool to avoid blocking the event loop.
+        
+        Args:
+            retries: Number of retry attempts (default: 3)
+            delay: Delay between retries in seconds (default: 2)
         """
-        try:
-            logger.info("Fetching realtime market data...")
-            df = ak.stock_zh_a_spot_em()
-            
-            if df is None or len(df) == 0:
-                logger.warning("No realtime data fetched")
-                return None
-            
-            # Ensure stock code column is formatted as 6-digit string
-            if '代码' in df.columns:
-                df['代码'] = df['代码'].apply(lambda x: f"{int(x):06d}" if pd.notna(x) else x)
-            
-            # Add timestamp
-            df['时间'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            return df
-            
-        except Exception as e:
-            logger.error(f"Error fetching realtime data: {e}")
-            return None
+        import time
+        
+        for attempt in range(1, retries + 1):
+            try:
+                logger.info(f"Fetching realtime market data... (Attempt {attempt}/{retries})")
+                df = ak.stock_zh_a_spot_em()
+                
+                if df is None or len(df) == 0:
+                    logger.warning(f"No realtime data fetched on attempt {attempt}")
+                    if attempt < retries:
+                        logger.info(f"Retrying in {delay} seconds...")
+                        time.sleep(delay)
+                        continue
+                    return None
+                
+                # Ensure stock code column is formatted as 6-digit string
+                if '代码' in df.columns:
+                    df['代码'] = df['代码'].apply(lambda x: f"{int(x):06d}" if pd.notna(x) else x)
+                
+                # Add timestamp
+                df['时间'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                logger.info(f"Successfully fetched realtime data for {len(df)} stocks")
+                return df
+                
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Error fetching realtime data (Attempt {attempt}/{retries}): {error_msg}")
+                
+                if attempt < retries:
+                    wait_time = delay * attempt  # Exponential backoff
+                    logger.info(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Failed to fetch realtime data after {retries} attempts")
+                    return None
     
     async def fetch_realtime_data(self) -> bool:
         """
@@ -1042,6 +1068,124 @@ class StockDataManager:
             self.atomic_write_csv(df, cache_path)
             return True
         return False
+
+    def has_basic_data(self) -> bool:
+        """
+        Check if system has basic data for clients to use.
+        Returns True if at least stock list and some market snapshot data exists.
+        Realtime data is checked but not required (nice to have).
+        """
+        # Check if stock list exists (REQUIRED)
+        stock_list_file = self.cache_dir / "stock_list" / "stock_info_a_code_name.csv"
+        if not stock_list_file.exists():
+            logger.info("No stock list found in cache")
+            return False
+            
+        # Check if we have any market snapshot data (REQUIRED - at least one)
+        sse_summary_file = self.cache_dir / "market_snap" / "sse_summary.csv"
+        market_activity_file = self.cache_dir / "market_snap" / "market_activity.csv"
+        
+        if not sse_summary_file.exists() and not market_activity_file.exists():
+            logger.info("No market snapshot data found in cache")
+            return False
+        
+        # Check if we have realtime data (NICE TO HAVE, not required)
+        # Check both SQLite database and market snapshot file
+        has_realtime = False
+        
+        # Check if realtime database has data
+        try:
+            conn = self._get_db_conn()
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM realtime_ticks')
+            count = cursor.fetchone()[0]
+            conn.close()
+            if count > 0:
+                has_realtime = True
+                logger.info(f"Found {count} realtime records in database")
+        except Exception as e:
+            logger.debug(f"Could not check realtime database: {e}")
+        
+        # Check if market snapshot file exists (latest_spot.csv)
+        market_spot_file = self.cache_dir / "market_snap" / "latest_spot.csv"
+        if market_spot_file.exists():
+            has_realtime = True
+            logger.info("Found market snapshot file")
+        
+        if not has_realtime:
+            logger.info("No realtime data found (optional, will try to fetch on startup)")
+        
+        logger.info("Basic data exists in cache")
+        return True
+    
+    async def ensure_initial_data(self) -> bool:
+        """
+        Ensure system has basic data available.
+        If no data exists, fetch initial data regardless of trading time.
+        This should be called on system startup.
+        """
+        if self._initial_data_loaded:
+            return True
+            
+        if self.has_basic_data():
+            logger.info("Basic data already exists, skipping initial fetch")
+            self._initial_data_loaded = True
+            return True
+            
+        logger.info("No basic data found. Performing initial data fetch...")
+        
+        try:
+            # Fetch essential data that clients need
+            tasks = []
+            
+            # 1. Stock list (essential)
+            logger.info("Fetching initial stock list...")
+            stock_list_success = await self.fetch_stock_list()
+            
+            # 2. Market snapshots (essential for basic functionality)
+            logger.info("Fetching initial market activity...")
+            market_activity_success = await self.fetch_market_activity()
+            
+            logger.info("Fetching initial SSE summary...")
+            sse_summary_success = await self.fetch_sse_summary()
+            
+            # 3. Try to fetch realtime data (important for client display)
+            # Allow system to start even if this fails, but log it prominently
+            logger.info("Fetching initial realtime data...")
+            try:
+                realtime_success = await self.fetch_realtime_data()
+                if not realtime_success:
+                    logger.warning("⚠️  Failed to fetch initial realtime data. Real-time K-line API may return 404.")
+                    logger.warning("⚠️  The system will continue to work, but realtime data will be unavailable until next fetch.")
+            except Exception as e:
+                logger.error(f"❌ Exception while fetching initial realtime data: {e}")
+                logger.warning("⚠️  Continuing without realtime data. Client may see 404 for real-time endpoints.")
+            
+            # 4. Try to fetch fund flow and stock changes (nice to have)
+            logger.info("Fetching initial fund flow...")
+            try:
+                await self.fetch_fund_flow()
+            except Exception as e:
+                logger.warning(f"Failed to fetch initial fund flow: {e}")
+            
+            logger.info("Fetching initial stock changes...")
+            try:
+                await self.fetch_stock_changes()
+            except Exception as e:
+                logger.warning(f"Failed to fetch initial stock changes: {e}")
+            
+            # Check if essential data was fetched successfully
+            if stock_list_success and (market_activity_success or sse_summary_success):
+                logger.info("Initial data fetch completed successfully")
+                self._initial_data_loaded = True
+                return True
+            else:
+                logger.error("Failed to fetch essential initial data")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error during initial data fetch: {e}")
+            return False
 
     def shutdown(self):
         """Shutdown the manager and cleanup resources"""

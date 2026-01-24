@@ -7,6 +7,7 @@ from app.core.config_v2 import settings
 from app.db.session import operational_engine
 from app.models.models import Subscription, AdminUser, PaymentOrder
 from app.api.endpoints import client, payment, data, data_v2 # Loading both for compatibility
+from app.services.stock_data_manager import get_stock_data_manager
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -15,9 +16,22 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Application starting up...")
-    # Initialize DB (if using SQLite) or perform other startup tasks
+    
+    # Initialize stock data manager and ensure basic data exists
+    logger.info("Initializing stock data manager...")
+    manager = get_stock_data_manager()
+    
+    # Check if we have basic data, if not fetch it
+    # This ensures clients can get data even when starting on non-trading days
+    logger.info("Checking for initial data availability...")
+    await manager.ensure_initial_data()
+    
+    logger.info("Application startup complete.")
     yield
+    
     logger.info("Application shutting down...")
+    manager.shutdown()
+    logger.info("Application shutdown complete.")
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 

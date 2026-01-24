@@ -4,6 +4,7 @@ import traceback
 import sys
 import os
 from datetime import datetime
+from pathlib import Path
 from func_timeout import func_timeout, FunctionTimedOut
 
 # Add current directory to path so we can import app
@@ -56,13 +57,32 @@ def main():
     
     calendar = get_trading_calendar_service()
     
-    # 2. Initial Data Load if DB is empty (Regardless of trading session)
+    # Check if DB is empty OR if we don't have basic cache data
+    should_fetch_initial = False
+    
+    # 1. Check if database is empty
     if is_db_empty():
-        logger.info("Database is empty. Performing initial data fetch immediately to provide baseline data.")
+        logger.info("Database is empty, will perform initial data fetch.")
+        should_fetch_initial = True
+    
+    # 2. Check if cache files exist (for clients to use)
+    cache_dir = settings.SHARED_CACHE_DIR
+    stock_list_file = cache_dir / "stock_list" / "stock_info_a_code_name.csv"
+    sse_summary_file = cache_dir / "market_snap" / "sse_summary.csv"
+    
+    if not stock_list_file.exists() or not sse_summary_file.exists():
+        logger.info("Basic cache files missing, will perform initial data fetch.")
+        should_fetch_initial = True
+    
+    # 3. Perform initial fetch if needed
+    if should_fetch_initial:
+        logger.info("Performing initial data fetch to ensure clients have baseline data...")
         try:
             func_timeout(120, single_fetch_cycle)
+            logger.info("Initial data fetch completed successfully.")
         except Exception as e:
             logger.error(f"Initial fetch failed: {e}")
+            logger.warning("Continuing anyway, will retry on next cycle if in trading hours.")
 
     logger.info("Starting Fetcher Daemon Loop...")
     
@@ -70,7 +90,7 @@ def main():
         try:
             start_time = time.time()
             
-            # 3. Trading Session Check
+            # Trading Session Check
             is_trade_day = calendar.is_trading_day()
             is_trade_hour = calendar.is_trading_hour()
             

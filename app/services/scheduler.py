@@ -160,6 +160,32 @@ def start_scheduler():
     
     scheduler.start()
     logger.info("Scheduler started with new stock data tasks.")
+    
+    # Perform initial data check on startup
+    # This ensures we have basic data even when starting in non-trading hours
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    manager = get_stock_data_manager()
+    
+    # Run initial data check asynchronously
+    async def ensure_initial_data_async():
+        try:
+            logger.info("Scheduler: Checking for initial data availability...")
+            await manager.ensure_initial_data()
+            logger.info("Scheduler: Initial data check completed.")
+        except Exception as e:
+            logger.error(f"Scheduler: Error during initial data check: {e}")
+    
+    # Schedule the initial data check as a background task
+    if loop.is_running():
+        asyncio.create_task(ensure_initial_data_async())
+    else:
+        loop.run_until_complete(ensure_initial_data_async())
 
 def stop_scheduler():
     """Stop the scheduler gracefully"""

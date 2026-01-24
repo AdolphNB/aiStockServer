@@ -98,24 +98,30 @@ async def get_fund_flow(
 ):
     """
     Get fund flow data (资金流向).
+    If symbol is provided, returns filtered data for that stock.
     """
     try:
-        file_path = CACHE_DIR / "fund_flow" / "latest_flow.csv"
+        # Use stock data manager for consistent data access
+        manager = get_stock_data_manager()
         
-        if file_path.exists():
-            # If symbol is provided, we might need to filter. 
-            # But the goal is "Zero-Copy CSV Transmission". 
-            # Filtering requires loading into memory.
-            # For now, let's return the whole file if no symbol, 
-            # or if symbol is provided, we might have a choice:
-            # 1. Return whole file and let client filter (best for performance)
-            # 2. Filter here (violates zero-copy)
-            
-            # The refactor.md says "API 进程不进行数据解析和序列化，仅进行文件流转发"
-            # So we should probably just return the whole file or have Fetcher pre-filter (which is impractical for all symbols).
-            return FileResponse(file_path, media_type="text/csv", filename="fund_flow.csv")
+        # Get fund flow data, with optional filtering by symbol
+        df = manager.get_fund_flow(stock_code=symbol)
         
-        raise HTTPException(status_code=404, detail="Fund flow data not found")
+        if df is None or df.empty:
+            if symbol:
+                raise HTTPException(status_code=404, detail=f"Fund flow data for {symbol} not found")
+            else:
+                raise HTTPException(status_code=404, detail="Fund flow data not found")
+        
+        # Convert to CSV and return
+        csv_data = df.to_csv(index=False, encoding='utf-8-sig')
+        filename = f"fund_flow_{symbol}.csv" if symbol else "fund_flow.csv"
+        
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
         
     except HTTPException:
         raise
@@ -130,14 +136,30 @@ async def get_stock_changes(
 ):
     """
     Get stock changes data (盘口异动).
+    If symbol is provided, returns filtered data for that stock.
     """
     try:
-        file_path = CACHE_DIR / "stock_changes" / "latest_changes.csv"
+        # Use stock data manager for consistent data access
+        manager = get_stock_data_manager()
         
-        if file_path.exists():
-            return FileResponse(file_path, media_type="text/csv", filename="stock_changes.csv")
+        # Get stock changes data, with optional filtering by symbol
+        df = manager.get_stock_changes(stock_code=symbol)
         
-        raise HTTPException(status_code=404, detail="Stock changes data not found")
+        if df is None or df.empty:
+            if symbol:
+                raise HTTPException(status_code=404, detail=f"Stock changes data for {symbol} not found")
+            else:
+                raise HTTPException(status_code=404, detail="Stock changes data not found")
+        
+        # Convert to CSV and return
+        csv_data = df.to_csv(index=False, encoding='utf-8-sig')
+        filename = f"stock_changes_{symbol}.csv" if symbol else "stock_changes.csv"
+        
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
     
     except HTTPException:
         raise
